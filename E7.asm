@@ -25,6 +25,18 @@ INS
 ;     E = Esquerda (left), C = Centro (center), D = Direita (right)
 ;   Opens gap buffer and reformats through SAIDA with ADJ.FLAG set,
 ;   which causes SAIDA to call AJUSTAR1 instead of BASICO.
+;
+;   def ajustar():
+;       key = toupper(wait_key())
+;       if key == CTRL_C: return
+;       if key not in ('C', 'D', 'E'):
+;           errbell(); return ajustar()
+;       opcao_aj = key
+;       mov_abre()          # open gap buffer for editing
+;       IF = PF             # point formatter input at end of text
+;       adj_flag = True
+;       saida()             # reformat paragraph (dispatches to ajustar1)
+;       adj_flag = False
 ;------------------------------------------------------------
 ;
 OPCAO.AJ DFS 1                   ; selected option: 'C', 'D', or 'E'
@@ -68,6 +80,41 @@ AJUSTAR:
 ;     Center: margin = (body_width - line_len) / 2
 ;     Right:  margin = body_width - line_len
 ;   Stops at paragraph marker (Ctrl-P).
+;
+;   def ajustar1():
+;       check_table_passthrough()
+;       body_width = MD - ME + 1
+;       while True:
+;           while mem[IF] == ' ':       # skip leading spaces
+;               IF += 1
+;           if mem[IF] == PARAGR: return
+;           # measure line length (up to body_width chars)
+;           line_len = 0
+;           while mem[IF + line_len] not in (CR, PARAGR) and line_len <= body_width:
+;               line_len += 1
+;           if line_len > body_width:
+;               # word-wrap: scan back for last space
+;               while line_len > 0:
+;                   line_len -= 1
+;                   if mem[IF + line_len] == ' ':
+;                       mem[IF + line_len] = CR   # force line break
+;                       break
+;               else:
+;                   error("ERRFORM"); return
+;           if line_len > 0:
+;               if opcao_aj == 'E':   margin = 0               # left
+;               elif opcao_aj == 'C': margin = (body_width - line_len) // 2  # center
+;               else:                 margin = body_width - line_len          # right
+;               margin += ME          # add left margin offset
+;               for _ in range(margin):
+;                   mem[PC] = ' '; PC += 1
+;           # copy line text from IF to PC
+;           while True:
+;               ch = mem[IF]
+;               if ch == PARAGR:
+;                   mem[PC] = CR; PC += 1; return
+;               mem[PC] = ch; IF += 1; PC += 1
+;               if ch == CR: break    # next line
 ;------------------------------------------------------------
 ;
 AJUSTAR1:
@@ -187,6 +234,37 @@ AJSTEXIT RTS
 ;     L = Line spacing
 ;   Parameters are stored as a contiguous array starting at AUTOFORM.
 ;   Validates that margins and indent leave at least 30 usable columns.
+;
+;   PARAMS = [autoform, spr, MD, ME, PA, colunas, space]  # indexed 0..6
+;   HOTKEYS = "ASDEPCL"
+;
+;   def parform():
+;       MD = COLUNAS - MD        # convert right-offset to absolute column
+;       show_menu(7 items)
+;       for x in range(7):       # display current values
+;           cursor_to(col=29, row=x*2+5)
+;           if x < 2: print("SIM" if PARAMS[x] else "NAO")
+;           else:      print_decimal(PARAMS[x])
+;       while True:
+;           key = wait_key()
+;           if key == CTRL_C:
+;               MD = COLUNAS - MD     # convert back to right-offset
+;               ME_PA = ME + PA       # precompute combined margin
+;               newpage(); return
+;           x = HOTKEYS.index(toupper(key))
+;           if x < 0: errbell(); continue
+;           if x < 2:                # boolean toggle
+;               PARAMS[x] ^= 1
+;               print("SIM" if PARAMS[x] else "NAO")
+;           else:                     # numeric edit
+;               old = PARAMS[x]
+;               PARAMS[x] = read_number()
+;               if SPACE >= 4 or MD == 0 or COLUNAS >= 133 \
+;                  or COLUNAS - MD - ME - PA < 30:
+;                   PARAMS[x] = old   # validation failed, rollback
+;                   errbell()
+;               else:
+;                   print_decimal(PARAMS[x])
 ;------------------------------------------------------------
 ;
 OPC.PRFM ASC "ASDEPCL"       ; hotkey-to-index mapping
@@ -339,6 +417,7 @@ PRF.MAIN JSR WAIT
          JMP PRF.MAIN
 ;
 ; ARCUR.PF -- Move cursor to value column for parameter X
+;   def arcur_pf(x): cursor_to(col=29, row=x*2+5); clear_to_eol()
 ARCUR.PF:
          LDA #29
          STA CH
@@ -352,6 +431,21 @@ ARCUR.PF:
 ;------------------------------------------------------------
 ; SALTA -- Jump to a position in the document
 ;   C = Comeco (start), M = Meio (middle), F = Fim (end)
+;
+;   def salta():
+;       while True:
+;           key = toupper(get_key())
+;           if key == 'C':
+;               PC = INIBUF; newpage(); return
+;           elif key == 'M':
+;               PC = INIBUF + (PF - INIBUF) // 2
+;               newpage(); return
+;           elif key == 'F':
+;               PC = PF; newpage(); return
+;           elif key == CTRL_C:
+;               return
+;           else:
+;               errbell()
 ;------------------------------------------------------------
 ;
 SALTA:
@@ -415,6 +509,29 @@ SALTA:
 ;   text where the search string has no hyphen, the hyphen+CR and
 ;   any following whitespace are skipped (the word continues).
 ;   Returns Carry=0 if found (PC at match), Carry=1 if not found.
+;
+;   def procura1() -> bool:       # True = found (PC at match)
+;       while PC < PF:
+;           if mem[PC] != BUFFER[0]:
+;               PC += 1; continue
+;           x, y = 0, 0              # x = pattern index, y = text offset
+;           matched = True
+;           while True:
+;               if BUFFER[x] == CR:
+;                   return True       # full pattern matched
+;               if BUFFER[x] == mem[PC + y]:
+;                   x += 1; y += 1; continue
+;               # soft-hyphen transparency: skip "-\n" + whitespace
+;               if mem[PC + y] == '-' and mem[PC + y + 1] == CR:
+;                   y += 2
+;                   while mem[PC + y] <= ' ':   # skip spaces/controls
+;                       y += 1
+;                   if mem[PC + y] == BUFFER[x]:
+;                       x += 1; y += 1; continue
+;               matched = False; break
+;           if not matched:
+;               PC += 1
+;       return False                  # not found
 ;------------------------------------------------------------
 ;
 PROCURA1:
@@ -468,6 +585,18 @@ PROCURA1:
 ; PROCURA -- Search command handler
 ;   Prompts for search string, searches from current PC+1.
 ;   If found, redraws page at match position.
+;
+;   def procura():
+;       saved_pc = PC
+;       search_str = input_string()
+;       if cancelled: return
+;       PC += 1                   # start after current position
+;       if procura1():            # found
+;           newpage()             # redraw at match
+;       else:
+;           message("NOT FOUND!")
+;           PC = saved_pc         # restore cursor
+;           errbell(); wait_key()
 ;------------------------------------------------------------
 ;
 PROCURA:
@@ -504,6 +633,36 @@ PROCURA:
 ;     Ctrl-C:      confirm and execute deletion
 ;   Shows a live preview (FASTVIS) after each step.
 ;   If nothing was deleted, returns without modifying the buffer.
+;
+;   def apagar():
+;       reset_markers()
+;       pc1 = PC                      # save deletion origin
+;       while True:
+;           key = get_key()
+;           if key == CTRL_U:         # extend forward 1 char
+;               if PC >= PF: errbell(); continue
+;               PC += 1
+;           elif key == CTRL_H:       # extend backward 1 char
+;               if PC == pc1: errbell(); continue
+;               PC -= 1
+;           elif key == CR:           # extend forward 1 line
+;               advance_to_next_line()
+;           elif key == '-':          # extend backward 1 line
+;               if PC == pc1: errbell(); continue
+;               back_one_line()
+;               if PC < pc1: PC = pc1  # clamp to origin
+;           elif key == CTRL_C:       # confirm
+;               if PC == pc1: return   # nothing selected
+;               if autoformat:
+;                   mov_abre()         # open gap buffer
+;                   PC = pc1
+;                   saida()            # reformat paragraph
+;               else:
+;                   mov_apag()         # simple block delete
+;               arrpage(); return
+;           else:
+;               errbell(); continue
+;           fastvis()                  # live preview after each step
 ;------------------------------------------------------------
 ;
 APAGAR:
@@ -580,6 +739,10 @@ APAG.EXT JSR PC.PC1?
 ;
 ;------------------------------------------------------------
 ; ARRMARC -- Reset block markers M1 and M2 to INIBUF
+;
+;   def arrmarc():
+;       M1 = INIBUF
+;       M2 = INIBUF
 ;------------------------------------------------------------
 ;
 ARRMARC:
@@ -597,6 +760,16 @@ ARRMARC:
 ;   Alternates between setting M1 and M2 at the current PC.
 ;   Shows '/' or '\' on the status bar to indicate which
 ;   marker was just set.
+;
+;   def marca():
+;       marca_flag = not marca_flag    # toggle
+;       if marca_flag:
+;           status_bar[15] = '/'       # visual indicator: M1
+;           M1 = PC
+;       else:
+;           status_bar[15] = '\\'      # visual indicator: M2
+;           M2 = PC
+;       wait_for_any_key()
 ;------------------------------------------------------------
 ;
 MARCA.FL BYT 0               ; 0 -> set M1 next, $FF -> set M2 next
@@ -637,6 +810,33 @@ MARCA:
 ;   Original characters are saved in a buffer (PF+1..ENDBUF)
 ;   so Ctrl-H can undo. Ctrl-C exits (with optional reformat).
 ;   Ctrl-P (PARAGR) is rejected to protect paragraph structure.
+;
+;   def troca():
+;       undo_buf = []                  # undo stack at PF+1..ENDBUF
+;       pc1 = PC                       # save start position
+;       while True:
+;           key = get_key()
+;           if key == CTRL_H:          # undo last overwrite
+;               if PC == pc1: errbell(); continue
+;               PC -= 1
+;               mem[PC] = undo_buf.pop()
+;               fastvis()
+;           elif key == CTRL_C:        # exit exchange mode
+;               if autoformat and PC != pc1:
+;                   mov_abre()
+;                   saida()            # reformat changed paragraph
+;               arrpage(); return
+;           elif key == PARAGR:        # reject paragraph marker
+;               errbell()
+;           else:                      # overwrite character
+;               if PC >= PF: errbell(); continue
+;               if len(undo_buf) >= ENDBUF - PF:
+;                   error("OUT OF SPACE"); continue
+;               undo_buf.append(mem[PC])  # save original
+;               mem[PC] = key             # overwrite
+;               print(key)
+;               PC += 1
+;               fastvis()
 ;------------------------------------------------------------
 ;
 TROCA:
@@ -741,6 +941,48 @@ TROC.EXT JMP ARRPAGE
 ;     CR  = Line down        -   = Line up
 ;     ^O  = Logical up       ^L  = Logical down
 ;     ^I  = Tab forward
+;
+;   COMMANDS = {
+;       'I': insere,   'A': apagar,   'T': troca,   'R': renome,
+;       'B': blocos,   'E': espaco,   'P': procura,  'S': salta,
+;       'J': ajustar,  'M': marca,    'L': listar,   'F': parform,
+;       'D': disco,    CTRL_W: tabula
+;   }
+;
+;   def main():
+;       while True:
+;           refresh_status_bar()
+;           while True:                    # inner loop: navigation keys
+;               key = toupper(get_key())
+;               if key in ('<', ','):      # page up
+;                   if PC == INIBUF: errbell(); continue
+;                   while CV80 > 1: menos(); CV80 -= 1
+;                   arrpage(); continue
+;               if key in ('>', '.'):      # page down
+;                   if PC >= PF: errbell(); continue
+;                   while CV80 < 23: prtline()
+;                   arrpage(); continue
+;               if key == CTRL_H: backcur(); continue
+;               if key == CTRL_U: andacur(); continue
+;               if key == CR:     mais(); continue
+;               if key == '-':    menos(); continue
+;               if key == CTRL_O: up(); continue
+;               if key == CTRL_L: down(); continue
+;               if key == CTRL_I:          # tab: advance to 8-col boundary
+;                   while True:
+;                       andacur()
+;                       if PC >= PF: break
+;                       if (CH80 + 1) % 8 == 0: break
+;                   continue
+;               if key in ('?', '/'):      # toggle aux help menu
+;                   show_aux_menu(); continue
+;               break                      # not a nav key -> dispatch
+;           if key in COMMANDS:
+;               COMMANDS[key]()
+;           elif key == CTRL_C:
+;               if main_ext(): return      # exit confirmed
+;           else:
+;               errbell()
 ;------------------------------------------------------------
 ;
 MAIN:
@@ -922,6 +1164,11 @@ MAIN1    JSR GETA
 ;------------------------------------------------------------
 ; MAIN.EXT -- Exit confirmation
 ;   Requires Ctrl-E as second keypress to actually exit.
+;
+;   def main_ext() -> bool:
+;       errbell()
+;       message("Press Ctrl-E to exit")
+;       return get_key() == CTRL_E     # True = exit, False = cancel
 ;------------------------------------------------------------
 ;
 MAIN.EXT:

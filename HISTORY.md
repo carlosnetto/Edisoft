@@ -31,6 +31,9 @@ A comprehensive effort was completed to translate all Portuguese comments into E
 - **Pseudo-Code Annotation:** Every line of assembly was annotated with high-level logic (e.g., `if/else`, `X++`, `loop`) to make the 6502 logic readable to modern developers.
 - **Hardware Documentation:** Apple II hardware interactions (keyboard strobes, speaker toggles, bank-switching) and Monitor ROM calls were explicitly documented using standard Apple technical terminology.
 
+### Python Pseudo-Code for Subroutines
+As a third annotation pass, Python pseudo-code equivalents were added to the assembly source as block comments before each subroutine. The goal was to make the algorithms immediately readable to modern developers without requiring 6502 knowledge. E7.asm was the first module to receive this treatment, covering all 13 subroutines: AJUSTAR, AJUSTAR1, PARFORM, ARCUR.PF, SALTA, PROCURA1, PROCURA, APAGAR, ARRMARC, MARCA, TROCA, MAIN, and MAIN.EXT.
+
 ### Current Project Modules
 - **E1.asm**: Initialization, global equates, basic I/O, and buffer management (Gap Buffer).
 - **E2.asm**: Windowing, virtual 80-column renderer, and cursor navigation.

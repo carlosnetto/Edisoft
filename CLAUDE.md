@@ -10,7 +10,6 @@ EDISOFT is a 6502 assembly text editor for the Apple II, written c. 1986 by two 
 - `README.md` -- Comprehensive project documentation (history, architecture, key bindings, memory map)
 - `APPLE2.md` -- Apple II hardware reference (zero page, I/O ports, DOS 3.3)
 - `HISTORY.md` -- Company history and market context
-- `GEMINI.md` -- Notes from the first annotation pass (Gemini)
 
 ## Key Technical Facts
 

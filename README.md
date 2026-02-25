@@ -47,7 +47,7 @@ EDISOFT never achieved the "Microsoft-IBM" style bundling deal that its author h
 
 ### Legacy
 
-Software Design was later renamed to **Matera Systems** (Matera Sistemas), which has since grown into a major player in the Brazilian banking technology industry. EDISOFT remains as a historical artifact -- a window into 1980s Brazilian software development and the technical ingenuity required to build professional tools on severely constrained hardware.
+Software Design was later renamed to **Matera Systems**, which has since grown into a major player in the Brazilian banking technology industry. EDISOFT remains as a historical artifact -- a window into 1980s Brazilian software development and the technical ingenuity required to build professional tools on severely constrained hardware.
 
 ---
 
