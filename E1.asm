@@ -228,6 +228,15 @@ KEYSTRBE EQU $C010           ; clear keyboard strobe (write to acknowledge key)
 ;
 ;------------------------------------------------------------
 ; INIT -- Cold start: set reset vector, init buffer, enter editor
+;
+;   def init():
+;       reset_vector = INIT              # Ctrl-Reset restarts editor
+;       reset_checksum = (INIT >> 8) ^ 0xA5
+;       select_rom()                     # ensure Monitor ROM accessible
+;       PC = PF = INIBUF                 # empty document
+;       gap_open = False
+;       auto_format = False
+;       warminit()                       # continue with warm start
 ;------------------------------------------------------------
 ;
 INIT:
@@ -254,6 +263,28 @@ INIT:
 ;------------------------------------------------------------
 ; WARMINIT -- Warm start: reset stack, restore I/O, redraw screen
 ;   Called after formatting, disk ops, or Ctrl-Reset
+;
+;   def warminit():
+;       disable_interrupts()
+;       SP = 0xFF                        # reset stack
+;       set_keyboard_input()
+;       set_screen_output()
+;       if gap_open: mov_fech()          # close any open gap
+;       home80()                         # clear virtual 80-col screen
+;       WNDTOP = 1                       # reserve row 0 for status bar
+;       M1 = M2 = INIBUF                 # reset block markers
+;       show_autoformat_indicator()
+;       shift_lock = '+'                 # CAPS LOCK default
+;       mem[PF] = CR                     # document ends with CR
+;       mem[INIBUF-1] = CR               # sentinel before buffer
+;       mem[INIBUF-2] = PARAGR           # paragraph sentinel
+;       mem[ENDBUF+1] = PARAGR           # paragraph sentinel
+;       MINFLG = 0x20                    # CAPS LOCK mode
+;       newpage()                        # render current page
+;       main()                           # enter command loop
+;       # on exit (Ctrl-E confirmed):
+;       restore_dos_reset_vector()
+;       return_to_basic()
 ;------------------------------------------------------------
 ;
 WARMINIT:
@@ -325,6 +356,9 @@ WARMINIT:
 ;
 ;------------------------------------------------------------
 ; DECA4 -- Decrement 16-bit pointer A4 (A4L/A4H)
+;
+;   def deca4():
+;       A4 -= 1                          # 16-bit decrement with borrow
 ;------------------------------------------------------------
 ;
 DECA4:
@@ -336,6 +370,13 @@ DECA4:
 ;
 ;------------------------------------------------------------
 ; MAIUSC -- toupper(A); if A==0, uses CARACTER instead
+;
+;   def maiusc(a: int) -> int:
+;       if a == 0:
+;           a = CARACTER                 # use saved char if input was 0
+;       if a >= ord('@'):
+;           a &= 0xDF                    # clear bit 5 -> uppercase
+;       return a
 ;------------------------------------------------------------
 ;
 MAIUSC:
@@ -349,6 +390,10 @@ MAIUSC:
 ;
 ;------------------------------------------------------------
 ; VTAB -- Set cursor to row A and recalculate screen base addr
+;
+;   def vtab(row: int):
+;       CV = row
+;       BASL = screen_line_address(CV)  # via Monitor ARRBASE
 ;------------------------------------------------------------
 ;
 VTAB:
@@ -357,6 +402,10 @@ VTAB:
 ;
 ;------------------------------------------------------------
 ; S.N? -- Prompt yes/no (Sim/Nao). Returns Z=1 if 'S' (yes)
+;
+;   def sim_nao() -> bool:
+;       key = toupper(geta())
+;       return key == 'S'                # True if user typed 'S' (Sim=Yes)
 ;------------------------------------------------------------
 ;
 S.N?:
@@ -367,6 +416,13 @@ S.N?:
 ;
 ;------------------------------------------------------------
 ; WAIT -- Block until a key is pressed (busy-wait on $C000)
+;
+;   def wait() -> int:
+;       clear_keyboard_strobe()
+;       while not key_available():       # poll bit 7 of $C000
+;           pass
+;       clear_keyboard_strobe()
+;       return last_key
 ;------------------------------------------------------------
 ;
 WAIT:
@@ -379,7 +435,14 @@ WAIT:
 ;------------------------------------------------------------
 ; LDIR -- Block copy forward (ascending addresses)
 ;   memcpy(EIBF, EIBI, TAM)  -- src=EIBI, dst=EIBF, len=TAM
-;   Named after Z80 LDIR instruction
+;   Named after Z80 LDIR instruction (Load, Increment, Repeat)
+;
+;   def ldir():
+;       """Copy TAM bytes from EIBI to EIBF, ascending."""
+;       for _ in range(TAM):
+;           mem[EIBF] = mem[EIBI]
+;           EIBI += 1
+;           EIBF += 1
 ;------------------------------------------------------------
 ;
 LDIR:
@@ -411,8 +474,17 @@ LDIR:
 ;------------------------------------------------------------
 ; LDDR -- Block copy backward (descending addresses)
 ;   Like LDIR but copies from high to low to handle overlapping
-;   regions where dst > src. Named after Z80 LDDR instruction.
+;   regions where dst > src. Named after Z80 LDDR instruction
+;   (Load, Decrement, Repeat).
 ;   memcpy_reverse(EFBF, EFBI, TAM)
+;
+;   def lddr():
+;       """Copy TAM bytes from EFBI to EFBF, descending.
+;       Used when dst > src to avoid overwriting source data."""
+;       for _ in range(TAM):
+;           mem[EFBF] = mem[EFBI]
+;           EFBI -= 1
+;           EFBF -= 1
 ;------------------------------------------------------------
 ;
 LDDR:
@@ -453,6 +525,16 @@ LDDR:
 ;   Before: [....][PC1..PC][text after PC..PF]
 ;   After:  [....][text after PC..PF']
 ;   PC is restored to PC1 (deletion point)
+;
+;   def mov_apag():
+;       """Delete range [PC1..PC) by shifting tail left."""
+;       # Calculate bytes to move (everything from PC to PF inclusive)
+;       size = PF - PC + 1
+;       # Shift tail left to overwrite deleted region
+;       ldir(src=PC, dst=PC1, count=size)  # memmove(PC1, PC, size)
+;       # Update pointers
+;       PF = PC1 + size - 1               # new end of text
+;       PC = PC1                          # cursor at deletion point
 ;------------------------------------------------------------
 ;
 MOV.APAG:
@@ -503,6 +585,18 @@ MOV.APAG:
 ;   The tail (PC..PF) is copied to end of buffer (..ENDBUF)
 ;   using LDDR (backward copy since regions overlap upward).
 ;   PF is updated to the new tail position near ENDBUF.
+;
+;   def mov_abre():
+;       """Open gap at cursor for insertion by moving tail to top."""
+;       global gap_open, PF
+;       gap_open = True
+;       # Calculate size of tail (PC to PF inclusive)
+;       size = PF - PC + 1
+;       # Copy tail to end of buffer (must use backward copy!)
+;       lddr(src=PF, dst=ENDBUF, count=size)  # copies high-to-low
+;       # PF now points to start of relocated tail
+;       PF = ENDBUF - size + 1
+;       # Gap is now: [PC .. PF)
 ;------------------------------------------------------------
 ;
 MOV.ABRE:
@@ -547,6 +641,17 @@ MOV.ABRE:
 ;   Before: [....PC][   gap   ][tail text @ PF..ENDBUF]
 ;   After:  [....PC][tail text..PF']
 ;   The tail at PF..ENDBUF is copied back down to PC using LDIR.
+;
+;   def mov_fech():
+;       """Close gap by moving tail back down to cursor position."""
+;       global gap_open, PF
+;       gap_open = False
+;       # Calculate size of tail (PF to ENDBUF inclusive)
+;       size = ENDBUF - PF + 1
+;       # Copy tail back down to PC (forward copy is safe here)
+;       ldir(src=PF, dst=PC, count=size)
+;       # PF now points to end of rejoined text
+;       PF = PC + size - 1
 ;------------------------------------------------------------
 ;
 MOV.FECH:
@@ -596,6 +701,17 @@ MOV.FECH:
 ;
 ;   Shows cursor by alternating the char under cursor with a
 ;   space. Checks $C000 between blinks. Returns key in A.
+;
+;   def rdkey40() -> int:
+;       saved_char = screen[BASL + CH]   # save char under cursor
+;       while True:
+;           screen[BASL + CH] = ' '      # cursor off (blank)
+;           pausa()
+;           screen[BASL + CH] = saved_char  # cursor on (restore)
+;           pausa()
+;           if key_available():
+;               clear_keyboard_strobe()
+;               return last_key
 ;------------------------------------------------------------
 ;
 TEMPOL   DFS 2                ; 16-bit counter for blink timing
@@ -614,8 +730,16 @@ RDKEY40:
          BPL <9                ; loop until key pressed
          STA KEYSTRBE
          RTS
-;
+;------------------------------------------------------------
 ; PAUSA -- Delay for cursor blink; exits early if key pressed
+;
+;   def pausa():
+;       counter = 46786                  # ~19K iterations at 1MHz
+;       while counter < 65536:           # counts up to overflow
+;           if key_available():
+;               return                   # exit early on keypress
+;           counter += 1
+;------------------------------------------------------------
 ;
 PAUSA:
          LDA #!46786           ; load 16-bit counter (counts up to 0 = ~19K iterations)
@@ -643,6 +767,36 @@ PAUSA:
 ;
 ;   After each non-ESC keypress, MINFLG is AND'd with $20, so
 ;   state '/' ($04) decays to lowercase ($00) after one character.
+;
+;   def geta() -> int:
+;       # Display column number on status bar (80-col mode only)
+;       if GET_FL == 0:
+;           status_bar[36:38] = f"{CH80+1:02d}"  # 1-based column
+;           key = rdkey80()
+;       else:
+;           key = rdkey40()
+;
+;       # ESC toggles shift-lock state: CAPS -> lowercase -> one-shot -> CAPS
+;       while key == ESC:
+;           if MINFLG == 0x00:           # lowercase -> one-shot
+;               MINFLG = 0x04
+;               indicator = '/'
+;           elif MINFLG == 0x04:         # one-shot -> CAPS
+;               MINFLG = 0x20
+;               indicator = '+'
+;           else:                        # CAPS -> lowercase
+;               MINFLG = 0x00
+;               indicator = '-'
+;           status_bar[39] = indicator
+;           key = rdkey80() if GET_FL == 0 else rdkey40()
+;
+;       # Apply shift-lock transformation to letter keys
+;       if MINFLG == 0x00 and key >= ord('@'):
+;           key |= 0x20                  # convert to lowercase
+;
+;       # Decay one-shot mode after keypress
+;       MINFLG &= 0x20                   # 0x04 -> 0x00, 0x20 stays 0x20
+;       return key
 ;------------------------------------------------------------
 ;
 GET.FL   BYT 0                ; 0 = use 80-col input, else 40-col
@@ -712,6 +866,12 @@ GETA:
 ;
 ;------------------------------------------------------------
 ; GETA40 -- Force 40-col key read (temporarily sets GET.FL)
+;
+;   def geta40() -> int:
+;       GET_FL += 1                      # force 40-col mode
+;       key = geta()
+;       GET_FL -= 1                      # restore mode
+;       return key
 ;------------------------------------------------------------
 ;
 GETA40:
@@ -725,6 +885,31 @@ GETA40:
 ;
 ;   Reads up to 20 chars. Backspace supported.
 ;   Returns: Carry=0 on CR (ok), Carry=1 on Ctrl-C (cancel)
+;
+;   def input(which_buffer: int) -> bool:
+;       """Read string into BUFFER (0) or BUFAUX (1). Returns True if OK."""
+;       buf = BUFAUX if which_buffer else BUFFER
+;       CH = 5 if which_buffer else 10   # cursor start column
+;       vtab(0)                          # status bar row
+;       length = 0
+;
+;       while True:
+;           key = geta40()
+;           if key == CTRL_C:
+;               BUFFER[0] = BUFAUX[0] = CR  # clear both buffers
+;               return False             # cancelled
+;           if key == CTRL_H:            # backspace
+;               if length > 0:
+;                   length -= 1
+;                   CH -= 1
+;                   screen[BASL + CH] = ' '  # erase char
+;           elif key == CR:
+;               buf[length] = CR         # null-terminate
+;               return True              # OK
+;           elif length < 20:            # max 20 chars
+;               buf[length] = key
+;               length += 1
+;               print40(key)             # echo char
 ;------------------------------------------------------------
 ;
 NBUF     BYT 0                 ; which buffer (0=BUFFER, 1=BUFAUX)
@@ -803,6 +988,15 @@ INPUT:
 ; PRINT -- Output char A to virtual 80-col display
 ;   CR -> clear to EOL then newline
 ;   Control chars -> displayed as visible glyphs
+;
+;   def print80(ch: int):
+;       if ch >= ord(' '):
+;           cout80(ch)                   # printable char
+;       elif ch == CR:
+;           clreol80()                   # clear to end of line
+;           crout80()                    # newline
+;       else:
+;           cout80(ch & 0x1F)            # make control char visible
 ;------------------------------------------------------------
 ;
 PRINT:
@@ -817,6 +1011,12 @@ PRINT:
 ;
 ;------------------------------------------------------------
 ; PRINT40 -- Output char A to standard 40-col screen
+;
+;   def print40(ch: int):
+;       if ch >= ord(' '):
+;           cout(ch)                     # printable char
+;       else:
+;           cout(ch & 0x1F)              # make control char visible
 ;------------------------------------------------------------
 ;
 PRINT40:
@@ -834,6 +1034,14 @@ PRINT40:
 ;
 ;   Usage:  JSR MESSAGE
 ;           ADR AJUST.ST        ; address of 33-byte string
+;
+;   def message():
+;       """Inline data trick: reads address from bytes after JSR."""
+;       return_addr = pop_stack()        # get return address
+;       msg_ptr = mem[return_addr + 1 : return_addr + 3]  # read 2-byte address
+;       for i in range(33):
+;           LINE1[i] = mem[msg_ptr + i]  # copy to status bar
+;       jump(return_addr + 3)            # skip past inline ADR
 ;------------------------------------------------------------
 ;
 MESSAGE:
@@ -868,6 +1076,14 @@ MESSAGE:
 ;   Usage:  JSR PUTSTR
 ;           ASC "HELLO"
 ;           BYT 0
+;
+;   def putstr():
+;       """Inline data trick: reads string from bytes after JSR."""
+;       addr = pop_stack() + 1           # point to first string byte
+;       while mem[addr] != 0:
+;           cout(mem[addr])
+;           addr += 1
+;       jump(addr + 1)                   # skip past NUL terminator
 ;------------------------------------------------------------
 ;
 PUTSTR:
@@ -893,6 +1109,23 @@ PUTSTR:
 ;     - 80 columns are filled (CH80 wraps to 0), or
 ;     - a CR is encountered
 ;   Advances PC past the printed characters.
+;
+;   def prtline():
+;       """Output one line from text buffer to 80-col display."""
+;       while True:
+;           ch = mem[PC]
+;           if ch == CR:
+;               if PC == PF:             # at end of text
+;                   if PRT_FLAG:
+;                       print80(CR)      # print final CR in print mode
+;                   return
+;               print80(CR)              # output CR (clears line + newline)
+;               PC += 1
+;               return
+;           print80(ch)
+;           PC += 1
+;           if CH80 == 0:                # wrapped to next line
+;               return
 ;------------------------------------------------------------
 ;
 PRT.FLAG BYT 0                  ; when set, CR is printed (for printer output)

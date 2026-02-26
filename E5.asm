@@ -50,6 +50,28 @@ PRSLOT   BYT 1               ; printer card slot (1-7)
 ;
 ;   Displays all configurable parameters, lets user modify them,
 ;   validates constraints, and launches printing with 'L'.
+;
+;   def listar():
+;       home(); message("LISTAGEM: choose a command")
+;       menu([S-top, I-bottom, E-left, F-form, D-device, P-page, L-list, C-header])
+;       while True:
+;           display_current_values()     # show margins, device, pagination
+;           display_header_text()
+;           key = toupper(wait())
+;           if key == 'D': DEVICE ^= 1   # toggle monitor/printer
+;           elif key == 'F': TAMFORM = readnum(); chkvalst()
+;           elif key == 'L': listagem(); listar()
+;           elif key == 'S': MSUP = readnum(); chkvalst()
+;           elif key == 'I': MINF = readnum(); chkvalst()
+;           elif key == 'E': MESQ = readnum(); chkvalst()
+;           elif key == 'P':
+;               PAGFLAG ^= 1
+;               if PAGFLAG: INIPAG = readnum()  # starting page number
+;           elif key == 'C':
+;               readstr(39)              # read header text
+;               center_header()          # center within 40 columns
+;           elif key == CTRL_C: newpage(); return
+;           else: errbell()
 ;------------------------------------------------------------
 ;
 LISTAR:
@@ -325,6 +347,14 @@ CURS.LST:
 ;   Checks: form_length - top - bottom >= 10 (min body area)
 ;           top >= 3, bottom >= 3, left_margin < 61
 ;   Returns Carry=0 if valid, Carry=1 if invalid.
+;
+;   def chkvalst() -> bool:
+;       body = TAMFORM - MSUP - MINF
+;       if body < 10: return False       # body too small
+;       if MSUP < 3: return False        # top margin too small
+;       if MINF < 3: return False        # bottom margin too small
+;       if MESQ >= 61: return False      # left margin too large
+;       return True
 ;------------------------------------------------------------
 ;
 CHKVALST:
@@ -364,6 +394,12 @@ CONTLINE BYT 0                   ; current line on page
 ;
 ;------------------------------------------------------------
 ; POECABEC -- Print the page header
+;
+;   def poecabec():
+;       putbrc(MECABEC)                  # left margin
+;       for i in range(40):
+;           coutput(CABECAO[i])          # print 40-char header
+;       coutput(CR)
 ;------------------------------------------------------------
 ;
 POECABEC:
@@ -382,6 +418,12 @@ POECABEC:
 ;
 ;------------------------------------------------------------
 ; POEPAG -- Print page number in footer area
+;
+;   def poepag():
+;       if not PAGFLAG: return           # pagination disabled
+;       if CONTPAG == 0: return          # page 0 = don't print
+;       putbrc(MECABEC + 16)             # center page number
+;       decimal(CONTPAG)
 ;------------------------------------------------------------
 ;
 POEPAG:
@@ -406,6 +448,10 @@ POEPAG:
 ;
 ;------------------------------------------------------------
 ; PULALINE -- Print X blank lines (CRs)
+;
+;   def pulaline(count: int):
+;       for _ in range(count):
+;           coutput(CR)
 ;------------------------------------------------------------
 ;
 PULALINE:
@@ -419,6 +465,10 @@ PULALINE:
 ;
 ;------------------------------------------------------------
 ; PUTBRC -- Print X spaces
+;
+;   def putbrc(count: int):
+;       for _ in range(count):
+;           coutput(' ')
 ;------------------------------------------------------------
 ;
 PUTBRC:
@@ -437,6 +487,22 @@ PUTBRC:
 ;   In monitor mode, checks for:
 ;     Ctrl-A: toggle 80-col window half
 ;     Ctrl-S: pause output (press any key to resume)
+;
+;   def coutput(ch: int):
+;       cout(ch)                         # via hooked output (COUT80 or PRINTER)
+;       if DEVICE == 0: return           # printer: no keyboard checks
+;       if key_available():
+;           key = last_key
+;           if key == CTRL_A:
+;               COLUNA1 ^= 40; atualiza()  # toggle window
+;           elif key == CTRL_S:
+;               while True:              # pause until any key
+;                   key = wait()
+;                   if key == CTRL_A:
+;                       COLUNA1 ^= 40; atualiza()
+;                   else:
+;                       break
+;           clear_keyboard_strobe()
 ;------------------------------------------------------------
 ;
 COUTPUT:
@@ -482,6 +548,24 @@ COUTPUT:
 ;     $C084,Y: strobe 2
 ;   Status bits: bit 2 = offline, bit 1 = ready, bit 3 = busy
 ;   Automatically sends LF after each CR.
+;
+;   def printer(ch: int):
+;       while True:
+;           io_base = PRSLOT * 16
+;           if io_read(0xC081 + io_base) & 0x04:
+;               errprt()                 # offline
+;               continue
+;           if not (io_read(0xC081 + io_base) & 0x02):
+;               errprt()                 # not ready
+;               continue
+;           while io_read(0xC081 + io_base) & 0x08:
+;               pass                     # wait while busy
+;           break
+;       io_write(0xC081 + io_base, ch)   # data byte
+;       io_write(0xC082 + io_base, ch)   # strobe 1
+;       io_write(0xC084 + io_base, ch)   # strobe 2
+;       if ch == CR:
+;           printer(LINEFEED)            # auto-LF after CR
 ;------------------------------------------------------------
 ;
 ERRPRT:
@@ -541,6 +625,47 @@ PRINTER:
 ;     4. For monitor: print dotted page separator
 ;        For printer: send form feed
 ;   Ctrl-C aborts at any time.
+;
+;   def listagem():
+;       # Set up output hook
+;       if DEVICE == 1:                  # monitor
+;           home80(); COLUNA1 = 0; atualiza()
+;           CSWL, CSWH = &COUT80
+;       else:                            # printer
+;           CSWL, CSWH = &PRINTER
+;
+;       savepc()
+;       PC = INIBUF                      # start from beginning
+;       MAXLINE = TAMFORM - MSUP - MINF  # body lines per page
+;       CONTPAG = INIPAG                 # starting page number
+;
+;       while PC < PF:                   # PAGE LOOP
+;           pulaline(MSUP - 2)           # top margin
+;           poecabec()                   # header
+;           coutput(CR)                  # blank after header
+;           CONTLINE = 0
+;           while CONTLINE < MAXLINE:    # LINE LOOP
+;               if KEYBOARD == CTRL_C:
+;                   restpc(); setvid(); return  # abort
+;               if PC >= PF: break
+;               skip_markers()           # Ctrl-T, Ctrl-P
+;               print_left_margin()
+;               print_indentation()
+;               handle_ctrl_n()          # non-breaking join
+;               print_line_content()
+;               CONTLINE += 1
+;           # Page footer
+;           coutput(CR)
+;           poepag()                     # page number
+;           coutput(CR)
+;           if DEVICE == 1:              # monitor
+;               pulaline(MINF - 2)
+;               print("." * 80)          # dotted separator
+;           else:
+;               coutput(FORMFEED)
+;           CONTPAG += 1
+;
+;       restpc(); setvid(); wait()
 ;------------------------------------------------------------
 ;
 LISTAGEM:

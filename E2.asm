@@ -23,15 +23,19 @@ INS
 ;------------------------------------------------------------
 ; ATUALIZA -- Blit 40-col window from virtual 80-col buffer to screen
 ;
-;   for (col = 39; col >= 0; col--)
-;     for (row = 0..22)
-;       screen[row][col] = vbuf[row][col + COLUNA1]
-;
 ;   Y = physical column (0..39), X = virtual column (Y + COLUNA1)
 ;   Screen addresses are non-linear (Apple II interleaved layout):
 ;     Rows  1- 7: $480,$500,$580,$600,$680,$700,$780
 ;     Rows  8-15: $428,$4A8,$528,$5A8,$628,$6A8,$728,$7A8
 ;     Rows 16-23: $450,$4D0,$550,$5D0,$650,$6D0,$750,$7D0
+;
+;   def atualiza():
+;       """Copy 40-column window from virtual buffer to physical screen."""
+;       for phys_col in range(39, -1, -1):       # 39 down to 0
+;           virt_col = phys_col + COLUNA1
+;           for row in range(23):
+;               screen[row][phys_col] = vbuf[row][virt_col]
+;       # Fully unrolled for all 23 rows due to non-linear screen memory
 ;------------------------------------------------------------
 ;
 ATUALIZA:
@@ -99,8 +103,15 @@ ATUALIZA:
 ;
 ;------------------------------------------------------------
 ; SCRLUP -- Scroll virtual buffer UP one line
-;   for col in 0..79: row[n] = row[n+1]; row[22] = ' '
 ;   Then refreshes physical screen via ATUALIZA.
+;
+;   def scrlup():
+;       """Scroll content UP: each row gets the row below it."""
+;       for col in range(80):
+;           for row in range(22):
+;               vbuf[row][col] = vbuf[row + 1][col]
+;           vbuf[22][col] = ' '          # clear bottom row
+;       atualiza()
 ;------------------------------------------------------------
 ;
 SCRLUP:
@@ -165,6 +176,33 @@ SCRLUP:
 ;   Adjusts COLUNA1 so the cursor is always visible in the
 ;   40-col physical window (keeps 5-col margin on each side).
 ;   Ctrl-A manually toggles window between halves (0 / 40).
+;
+;   def rdkey80() -> int:
+;       COLCTRLA = 0
+;       while True:
+;           phys_col = CH80 - COLUNA1
+;           # Auto-scroll window to keep cursor visible with 5-col margins
+;           if phys_col < 5:
+;               COLUNA1 = max(0, CH80 - 5)
+;               atualiza()
+;               phys_col = CH80 - COLUNA1
+;           elif phys_col >= 35:
+;               COLUNA1 = min(40, CH80 - 34)
+;               atualiza()
+;               phys_col = CH80 - COLUNA1
+;
+;           if phys_col < 40:
+;               CH = phys_col
+;               key = rdkey40()          # read with blinking cursor
+;           else:
+;               key = wait()             # cursor off-screen, just wait
+;
+;           if key == CTRL_A:
+;               COLCTRLA ^= 40           # toggle between 0 and 40
+;               COLUNA1 = COLCTRLA
+;               atualiza()
+;               continue
+;           return key
 ;------------------------------------------------------------
 ;
 COLCTRLA BYT 0                  ; last manual Ctrl-A offset
@@ -226,6 +264,14 @@ RDKEY80:
 ;------------------------------------------------------------
 ; CLREOL80 -- Clear from CH80 to column 79 in virtual buffer
 ;   Also clears the physical screen if the range is visible.
+;
+;   def clreol80():
+;       phys_col = max(0, CH80 - COLUNA1)
+;       if phys_col < 40:
+;           CH = phys_col
+;           clreol()                     # clear physical screen
+;       for col in range(79, CH80 - 1, -1):
+;           vbuf[CV80][col] = ' '        # clear virtual buffer
 ;------------------------------------------------------------
 ;
 CLREOL80:
@@ -249,6 +295,14 @@ CLREOL80:
 ;------------------------------------------------------------
 ; LTCURS80 -- Move 80-col cursor left one position
 ;   Wraps to col 79 of previous line if at col 0.
+;
+;   def ltcurs80():
+;       if CH80 > 0:
+;           CH80 -= 1
+;       else:
+;           CH80 = 79
+;           CV80 -= 1
+;           arrbas80()
 ;------------------------------------------------------------
 ;
 LTCURS80:
@@ -263,6 +317,13 @@ LTCURS80:
 ;
 ;------------------------------------------------------------
 ; HOME80 -- Clear entire virtual 80-col buffer and physical screen
+;
+;   def home80():
+;       home()                           # clear physical screen
+;       for addr in range(INIVID80, ENDVID80):
+;           mem[addr] = ' '              # fill virtual buffer with spaces
+;       CH80 = 0
+;       vtab80(1)                        # cursor to row 1, column 0
 ;------------------------------------------------------------
 ;
 HOME80:
@@ -291,6 +352,10 @@ HOME80:
 ;
 ;------------------------------------------------------------
 ; VTAB80 -- Set virtual cursor row: CV80 = A, recalc BAS80
+;
+;   def vtab80(row: int):
+;       CV80 = row
+;       arrbas80()
 ;------------------------------------------------------------
 ;
 VTAB80:
@@ -302,6 +367,12 @@ VTAB80:
 ;
 ;   BAS80 = base address of row (CV80-1) in virtual buffer.
 ;   Also syncs physical CV and calls ARRBASE for BASL/BASH.
+;
+;   def arrbas80():
+;       CV = CV80                        # sync physical row
+;       idx = CV80 - 1                   # table is 0-indexed
+;       BAS80 = LOBYTE[idx] | (HIBYTE[idx] << 8)
+;       arrbase()                        # update BASL/BASH
 ;------------------------------------------------------------
 ;
 LOBYTE:  ; Low bytes of row start addresses (row 0..22 of vbuf)
@@ -332,6 +403,14 @@ ARRBAS80:
 ;------------------------------------------------------------
 ; CROUT80 -- Carriage return in 80-col mode
 ;   CH80 = 0; if at bottom row, scroll up; else CV80++.
+;
+;   def crout80():
+;       CH80 = 0
+;       if CV80 == 23:
+;           scrlup()                     # scroll screen up
+;       else:
+;           CV80 += 1
+;           arrbas80()
 ;------------------------------------------------------------
 ;
 CROUT80:
@@ -351,6 +430,18 @@ CROUT80:
 ;   Writes to vbuf[CV80][CH80]. If the column is in the visible
 ;   40-col window, also writes to the physical screen.
 ;   Auto-wraps at column 80.
+;
+;   def cout80(ch: int):
+;       if ch == CR:
+;           crout80()
+;           return
+;       vbuf[CV80][CH80] = ch            # write to virtual buffer
+;       phys_col = CH80 - COLUNA1
+;       if 0 <= phys_col < 40:
+;           screen[CV80][phys_col] = ch  # also write to physical screen
+;       CH80 += 1
+;       if CH80 >= 80:
+;           crout80()                    # auto line-wrap
 ;------------------------------------------------------------
 ;
 YSAV.C80 BYT 0
@@ -398,6 +489,29 @@ COUT80:
 ;   the original position or wraps. Tracks whether the end-of-text
 ;   address changed; if so, falls through to full VISUAL redraw.
 ;   More efficient than VISUAL for single-line edits.
+;
+;   def fastvis():
+;       """Incremental render from cursor; full redraw if text shifted."""
+;       savcur80(); savepc()
+;       while True:
+;           if CV80 == 23:
+;               ultiline()               # at bottom: render last line only
+;               restpc(); rstcur80()
+;               return
+;           ch = mem[PC]
+;           if ch == CR:
+;               clreol80()
+;               if PC >= PF: break       # at EOF
+;               crout80()
+;           else:
+;               print80(ch); PC += 1
+;       # Check if text layout changed (end-of-text moved)
+;       if (ULTADRL, ULTADRH) != (PC_lo, PC_hi):
+;           ULTADRL, ULTADRH = PC_lo, PC_hi
+;           restpc(); rstcur80()
+;           visual()                     # full redraw needed
+;       else:
+;           restpc(); rstcur80()
 ;------------------------------------------------------------
 ;
 CVFIM    BYT 0                  ; last row where rendering ended
@@ -465,6 +579,16 @@ FASTVIS:
 ;------------------------------------------------------------
 ; VISUAL -- Full screen render from PC to bottom of screen
 ;   Draws all lines from current CV80 to row 22, then ULTILINE.
+;
+;   def visual():
+;       """Full screen render from cursor to bottom."""
+;       savepc(); savcur80()
+;       PRT_FLAG = True                  # enable CR printing
+;       while CV80 < 23:
+;           prtline()
+;       ultiline()
+;       PRT_FLAG = False
+;       rstcur80(); restpc()
 ;------------------------------------------------------------
 ;
 VISUAL:
@@ -483,6 +607,15 @@ VISUAL:
 ;
 ;------------------------------------------------------------
 ; MEIAPAGE -- Render half a page (11 lines) from current position
+;
+;   def meiapage():
+;       PRT_FLAG = True
+;       for i in range(11):              # render 11 lines
+;           prtline()
+;           if CV80 == 23:
+;               ultiline()
+;               break
+;       PRT_FLAG = False
 ;------------------------------------------------------------
 ;
 X.MEIA   BYT 0
@@ -507,6 +640,19 @@ MEIAPAGE:
 ;------------------------------------------------------------
 ; ULTILINE -- Render last screen line (row 23) without wrapping
 ;   Stops at CR or column 79 (never triggers CROUT80/scroll).
+;
+;   def ultiline():
+;       """Render bottom row without scrolling."""
+;       savepc()
+;       saved_ch80 = CH80
+;       while True:
+;           ch = mem[PC]
+;           if ch == CR or CH80 >= 79:
+;               break
+;           print80(ch); PC += 1
+;       clreol80()
+;       restpc()
+;       CH80 = saved_ch80
 ;------------------------------------------------------------
 ;
 CH.ULT   BYT 0
@@ -537,6 +683,14 @@ ULTILINE:
 ;------------------------------------------------------------
 ; ERRBELL -- Error beep (descending frequency sweep)
 ;   Toggles the speaker ($C030) with decreasing delays.
+;
+;   def errbell():
+;       """Descending tone error beep."""
+;       for i in range(255, 0, -1):
+;           delay((i >> 4) + 1)          # longer delay at start
+;           toggle(SPEAKER)
+;           delay(1)
+;           toggle(SPEAKER)              # one speaker cycle
 ;------------------------------------------------------------
 ;
 ERRBELL:
@@ -562,6 +716,14 @@ ERRBELL:
 ;   Copies each row to the one below (bottom-up), making room
 ;   at row 0 for new content. Used when navigating backward.
 ;   (Opposite of SCRLUP which scrolls content up.)
+;
+;   def scroll():
+;       """Scroll content DOWN: each row gets the row above it."""
+;       for col in range(80):
+;           for row in range(22, 0, -1):  # bottom to top
+;               vbuf[row][col] = vbuf[row - 1][col]
+;           # row 0 left unchanged (caller will fill it)
+;       atualiza()
 ;------------------------------------------------------------
 ;
 SCROLL:
@@ -620,6 +782,9 @@ SCROLL:
 ;
 ;------------------------------------------------------------
 ; NEWPAGE -- Redraw screen centered on current PC (row 12)
+;
+;   def newpage():
+;       xnewpage(target_row=12)          # cursor at middle
 ;------------------------------------------------------------
 ;
 NEWPAGE:
@@ -629,6 +794,9 @@ NEWPAGE:
 ;
 ;------------------------------------------------------------
 ; NEWPAGE1 -- Redraw screen keeping current cursor row
+;
+;   def newpage1():
+;       xnewpage(target_row=CV80)        # keep cursor row
 ;------------------------------------------------------------
 ;
 NEWPAGE1:
@@ -643,6 +811,18 @@ NEWPAGE1:
 ;   2. Back up X-1 more lines (BACKLINE)
 ;   3. Render text from that point to the saved PC
 ;   4. Call VISUAL to fill the rest of the screen
+;
+;   def xnewpage(target_row: int):
+;       """Redraw screen with cursor at target_row."""
+;       CVINICIO = 0
+;       saved_pc = PC                    # remember where cursor is
+;       help()                           # find start of current line
+;       for _ in range(target_row - 1):
+;           backline()                   # back up target_row lines
+;       CH80 = 0; vtab80(1)              # home virtual cursor
+;       while PC != saved_pc:
+;           print80(mem[PC]); PC += 1    # render text to cursor
+;       visual()                         # render rest of screen
 ;------------------------------------------------------------
 ;
 X.NEW    BYT 0
@@ -682,6 +862,31 @@ XNEWPAGE:
 ;   If cursor is at row >= 12, renders from half-page above.
 ;   If cursor is near top, scrolls the display down line by line
 ;   to bring earlier text into view.
+;
+;   def arrpage():
+;       """Re-center display so cursor is at row 12 if possible."""
+;       savepc()
+;       saved_ch = CH80
+;       if CV80 >= 12:
+;           saved_row = 12
+;           meiapage()                   # render half-page
+;       else:
+;           # Cursor near top: scroll display down incrementally
+;           help()                       # find line start
+;           lines_to_scroll = 12 - CV80
+;           backline() for _ in range(CV80 - 1)
+;           while lines_to_scroll > 0:
+;               if PC == INIBUF:
+;                   saved_row = 12 - lines_to_scroll
+;                   break                # at start of buffer
+;               backline(); scroll()
+;               CH80 = 0; vtab80(1)
+;               prtline()                # render new top line
+;               backline()
+;               lines_to_scroll -= 1
+;           else:
+;               saved_row = 12
+;       rstcur80(); restpc()
 ;------------------------------------------------------------
 ;
 X.ARRPA  BYT 0
@@ -751,6 +956,13 @@ COMPLETA JSR MEIAPAGE
 ;
 ;------------------------------------------------------------
 ; SAVCUR80 / RSTCUR80 -- Save and restore 80-col cursor position
+;
+;   def savcur80():
+;       CH1, CV1 = CH80, CV80
+;
+;   def rstcur80():
+;       CH80, CV80 = CH1, CV1
+;       vtab80(CV1)
 ;------------------------------------------------------------
 ;
 CH1      BYT 0                  ; saved CH80
@@ -774,6 +986,28 @@ RSTCUR80:
 ;
 ;   Handles line wrapping (CR crossing) and screen scrolling
 ;   when the cursor reaches the top-left of the display.
+;
+;   def backcur():
+;       """Move cursor and PC backward one position."""
+;       if PC == INIBUF:
+;           errbell(); return            # at start of buffer
+;       PC -= 1
+;       if CV80 == 1 and CH80 == 0:
+;           # Cursor at top-left: scroll display down
+;           CVINICIO += 1; CVFIM += 1
+;           scroll()
+;           help(); prtline()
+;           backcur()                    # recursive call
+;           return
+;       if mem[PC] == CR:
+;           # Crossed a CR: find where previous line starts
+;           saved_pc = PC
+;           help()                       # find line start
+;           CH80 = saved_pc - PC         # column = distance to CR
+;           CV80 -= 1; arrbas80()
+;           PC = saved_pc
+;       else:
+;           ltcurs80()                   # just move cursor left
 ;------------------------------------------------------------
 ;
 BACKCUR:
@@ -831,6 +1065,15 @@ BACKCUR:
 ; ANDACUR -- Move cursor and PC one position forward
 ;   Prints the character at PC (advancing the virtual display),
 ;   then increments PC.
+;
+;   def andacur():
+;       """Move cursor and PC forward one position."""
+;       if PC == PF:
+;           errbell(); return            # at end of text
+;       print80(mem[PC])                 # display char (advances cursor)
+;       PC += 1
+;       if CV80 == 23:
+;           ultiline()                   # refresh last line after scroll
 ;------------------------------------------------------------
 ;
 ANDACUR:
@@ -855,6 +1098,9 @@ ANDACUR:
 ;------------------------------------------------------------
 ; INCPC / DECPC -- Increment / decrement 16-bit PC pointer
 ;   DECPC preserves A register.
+;
+;   def incpc(): PC += 1
+;   def decpc(): PC -= 1  # preserves A
 ;------------------------------------------------------------
 ;
 INCPC:
@@ -874,6 +1120,9 @@ DECPC:
 ;
 ;------------------------------------------------------------
 ; PC>>PC1 / PC1>>PC -- Copy PC to/from backup slot PC1
+;
+;   def pc_to_pc1(): PC1 = PC
+;   def pc1_to_pc(): PC = PC1
 ;------------------------------------------------------------
 ;
 PC>>PC1:
@@ -892,6 +1141,8 @@ PC1>>PC:
 ;
 ;------------------------------------------------------------
 ; PC.PC1? -- Compare PC with PC1. Returns Z=1 if equal.
+;
+;   def pc_eq_pc1() -> bool: return PC == PC1
 ;------------------------------------------------------------
 ;
 PC.CC1?:
@@ -905,6 +1156,8 @@ PC.PC1?:
 ;
 ;------------------------------------------------------------
 ; PC.PF? -- Compare PC with PF (end of text). Z=1 if at end.
+;
+;   def pc_at_eof() -> bool: return PC == PF
 ;------------------------------------------------------------
 ;
 PC.PF?:
@@ -917,6 +1170,8 @@ PC.PF?:
 ;
 ;------------------------------------------------------------
 ; PC.INIB? -- Compare PC with INIBUF (start of text). Z=1 if at start.
+;
+;   def pc_at_start() -> bool: return PC == INIBUF
 ;------------------------------------------------------------
 ;
 PC.INIB?:
@@ -932,6 +1187,14 @@ PC.INIB?:
 ;
 ;   Used to save/restore the cursor position across rendering
 ;   operations. TOPO is the stack index (starts at $FF = empty).
+;
+;   pc_stack = []  # max 5 entries
+;
+;   def savepc():
+;       pc_stack.append(PC)
+;
+;   def restpc():
+;       PC = pc_stack.pop()
 ;------------------------------------------------------------
 ;
 TOPO     HEX FF                 ; stack pointer (-1 = empty)
@@ -969,6 +1232,18 @@ RESTPC:
 ;
 ;   This is needed because a single paragraph may span multiple
 ;   screen lines (soft-wrapped at 80 columns).
+;
+;   def help():
+;       """Find start of current 80-column screen line."""
+;       saved_pc = PC
+;       # Scan backward to find previous CR
+;       while mem[PC] != CR:
+;           PC -= 1
+;       PC += 1                          # move past the CR
+;       # Advance in 80-byte steps until we pass saved_pc
+;       while PC + 80 <= saved_pc:
+;           PC += 80
+;       # PC now points to start of the screen line containing saved_pc
 ;------------------------------------------------------------
 ;
 PCLO.HLP BYT 0
@@ -1016,6 +1291,11 @@ HELP:
 ; BACKLINE -- Move PC to start of previous screen line
 ;   Decrements PC once (to cross into the previous line),
 ;   then calls HELP to find that line's start.
+;
+;   def backline():
+;       if PC == INIBUF: return          # at start of buffer
+;       PC -= 1                          # step into previous line
+;       help()                           # find its start
 ;------------------------------------------------------------
 ;
 BACKLINE:
@@ -1031,6 +1311,20 @@ BACKLINE:
 ;   Used for page-down scrolling. Preserves cursor position.
 ;   If already at bottom row (23), manually scans for next line
 ;   instead of using MAIS (which would scroll the screen).
+;
+;   def more():
+;       """Advance PC to start of next screen line."""
+;       if PC == PF:
+;           errbell(); return            # at end of text
+;       savcur80()
+;       if CV80 != 23:
+;           mais()                       # normal: use MAIS
+;       else:
+;           # At row 23: scan manually (don't scroll)
+;           while mem[PC] != CR and CH80 < 79:
+;               print80(mem[PC]); PC += 1
+;           if PC < PF: PC += 1          # skip past CR
+;       rstcur80()
 ;------------------------------------------------------------
 ;
 MORE:

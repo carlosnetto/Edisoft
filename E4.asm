@@ -44,6 +44,11 @@ PRTERROR EQU $A702           ; DOS ROM routine: print error message for code in 
 ;
 ;------------------------------------------------------------
 ; TECLE -- "Press any key" prompt at bottom of screen
+;
+;   def tecle():
+;       vtab(23); CH = 27
+;       putstr("TECLE ALGO..")           # "PRESS ANY KEY.."
+;       wait()
 ;------------------------------------------------------------
 ;
 TECLE:
@@ -61,6 +66,17 @@ TECLE:
 ;   Reads up to 29 chars into the DOS filename buffer at $AA75.
 ;   Pads with spaces to 30 chars (DOS 3.3 requirement).
 ;   Returns Carry=1 if filename is invalid (doesn't start with a letter).
+;
+;   def getarq() -> bool:
+;       """Prompt for filename. Returns True if valid."""
+;       home(); vtab(11)
+;       putstr("ARQUIVO:")               # "FILE:"
+;       CHARMIN, CHARMAX = ' ', 'y' + 1
+;       readstr(29)                      # read into FILENAME buffer
+;       # Find CR terminator, pad rest with spaces
+;       length = FILENAME.index(CR)
+;       FILENAME[length:30] = ' ' * (30 - length)
+;       return FILENAME[0] >= 'A'        # first char must be a letter
 ;------------------------------------------------------------
 ;
 GETARQ:
@@ -120,6 +136,15 @@ FILETYPE HEX 00              ; file type 0 = Text
 ;     6=CATALOG, 7=LOCK, 8=UNLOCK, 12=VERIFY
 ;   For READ/WRITE (3,4), only sets the data byte and sub-command.
 ;   For all others, copies the full default table.
+;
+;   def filllist(cmd: int, data_byte: int = 0):
+;       PARALIST[0] = cmd                # command code
+;       if cmd in (3, 4):                # READ or WRITE
+;           PARALIST[8] = data_byte      # data byte
+;           PARALIST[1] = 1              # sequential access
+;       else:
+;           # Copy defaults: reclen=1, vol=0, drive, slot, type=0, filename_ptr
+;           PARALIST[2:10] = DFLTTBLE[0:8]
 ;------------------------------------------------------------
 ;
 FILLLIST:
@@ -145,6 +170,16 @@ FILLLIST:
 ; X1MANG / X0MANG -- Call File Manager with X=1 or X=0
 ;   X=1: normal call. X=0: create-if-not-exists mode.
 ;   On error, jumps to ERRHAND. Returns Carry=0 on success.
+;
+;   def x1mang() -> bool:
+;       """Call File Manager (X=1). Returns True on success."""
+;       if filemang(1): return True
+;       errhand()
+;
+;   def x0mang() -> bool:
+;       """Call File Manager with create mode (X=0)."""
+;       if filemang(0): return True
+;       errhand()
 ;------------------------------------------------------------
 ;
 X1MANG:
@@ -163,6 +198,16 @@ X0MANG:
 ;   ParaList[10] contains the error code. Code 5 = end-of-file
 ;   (not a real error for sequential reads). All others display
 ;   the DOS error message and wait for a keypress.
+;
+;   def errhand():
+;       error_code = PARALIST[10]
+;       if error_code == 5:              # EOF
+;           return False                 # Carry=1, not a real error
+;       home(); errbell()
+;       CH = 11; vtab()
+;       prterror(error_code)             # DOS prints error string
+;       tecle()
+;       return False                     # Carry=1
 ;------------------------------------------------------------
 ;
 ERRHAND:
@@ -189,6 +234,20 @@ ERRHANDX JSR HOME
 ;   Issues DOS command 6 (CATALOG), then scans the VTOC bitmap
 ;   at DBUFF ($B3F3) to count free sectors. Each set bit in the
 ;   140-byte ($8C) bitmap represents one free sector.
+;
+;   def catalog():
+;       home()
+;       filllist(CMD_CATALOG)            # command 6
+;       if not x1mang(): return
+;       putstr("\nSETORES LIVRES:")      # "FREE SECTORS:"
+;       # Count set bits in 140-byte VTOC bitmap
+;       count = 0
+;       for byte in DBUFF[0:140]:
+;           for bit in range(8):
+;               if byte & (0x80 >> bit):
+;                   count += 1
+;       decimal(count)
+;       tecle()
 ;------------------------------------------------------------
 ;
 CATALOG:
@@ -235,6 +294,19 @@ CATALOG:
 ; File operation wrappers
 ;   Each sets the command code in X, fills the parameter list,
 ;   and calls the File Manager.
+;
+;   def unlock(): filllist(8); return x1mang()
+;   def lock():   filllist(7); return x1mang()
+;   def delete(): filllist(5); return x1mang()
+;   def open():
+;       filllist(1); x1mang()
+;       if PARALIST[7] & 0x7F != 0:      # not a text file
+;           close(); errhandx(13)        # "FILE TYPE MISMATCH"
+;   def makearq(): filllist(1); return x0mang()  # create if not exists
+;   def read() -> int: filllist(3); x1mang(); return PARALIST[8]
+;   def write(byte): filllist(4, byte); return x1mang()
+;   def close(): filllist(2); return x1mang()
+;   def verify(): filllist(12); return x1mang()
 ;------------------------------------------------------------
 ;
 UNLOCK:
@@ -302,6 +374,23 @@ VERIFY:
 ;   Opens file, opens gap buffer at current PC, reads bytes
 ;   one at a time into the gap until EOF or buffer full,
 ;   then closes gap and file.
+;
+;   def learq():
+;       """Load file into text buffer at cursor."""
+;       if not getarq(): goto disco
+;       if not open(): goto disco
+;       savepc()
+;       mov_abre()                       # open gap for insertion
+;       while PC < PF:                   # while room in buffer
+;           byte = read()
+;           if error or byte == 0: break # EOF or NUL
+;           mem[PC] = byte; PC += 1
+;       else:
+;           errbell()
+;           message("OUT OF SPACE")
+;           wait()
+;       mov_fech(); restpc(); close()
+;       goto disco
 ;------------------------------------------------------------
 ;
 LEARQ:
@@ -344,6 +433,20 @@ LEARQ:
 ;
 ;   Prompts for filename, creates new file (deletes old first),
 ;   writes every byte from INIBUF to PF, then closes.
+;
+;   def gravarq():
+;       """Save text buffer to file."""
+;       if not getarq(): goto disco
+;       makearq(); close()               # create if needed
+;       delete()                         # delete old version
+;       if not makearq(): goto disco     # create fresh
+;       savepc()
+;       PC = INIBUF                      # start of text
+;       while PC < PF:
+;           if not write(mem[PC]): break # write error
+;           PC += 1
+;       restpc(); close()
+;       goto disco
 ;------------------------------------------------------------
 ;
 GRAVARQ:
@@ -385,6 +488,33 @@ GRAVARQ:
 ;
 ;   Displays menu, shows current Drive and Slot, dispatches
 ;   commands. Ctrl-C returns to the editor.
+;
+;   def disco():
+;       message("DISCO: choose a command")
+;       home()
+;       menu([
+;           "C - CATALOGO",              # Catalog
+;           "L - LER ARQUIVO",           # Load file
+;           "G - GRAVAR ARQUIVO",        # Save file
+;           "T - TRAVAR ARQUIVO",        # Lock file
+;           "D - DESTR. ARQUIVO",        # Unlock file
+;           "A - APAGAR ARQUIVO",        # Delete file
+;           "U - UNID. DISCO...",        # Change drive
+;           "S - SOQUETE.......",        # Change slot
+;       ])
+;       while True:
+;           show_drive_and_slot()
+;           key = toupper(wait())
+;           if key == CTRL_C: newpage(); return
+;           elif key == 'L': learq()
+;           elif key == 'G': gravarq()
+;           elif key == 'C': catalog(); disco()
+;           elif key == 'T': lock_file()
+;           elif key == 'D': unlock_file()
+;           elif key == 'A': delete_file()
+;           elif key == 'U': change_drive()
+;           elif key == 'S': change_slot()
+;           else: errbell()
 ;------------------------------------------------------------
 ;
 DISCO:

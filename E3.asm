@@ -36,6 +36,29 @@ INS
 ;   PC = paragraph boundary (CR)
 ;   IF = start of raw text to format
 ;   Y  = initial left indent (number of leading spaces)
+;
+;   def basico(indent: int):
+;       """Format one paragraph with word-wrap and justification."""
+;       spc_check()
+;       if is_table_section():
+;           ajtabela()                   # emit Ctrl-T marker
+;           while mem[IF] != PARAGR:     # copy table verbatim
+;               mem[PC] = mem[IF]; PC += 1; IF += 1
+;           return
+;
+;       mem[PC] = CR; PC += 1            # paragraph separator
+;       col = 0
+;       while True:                      # BASICO1: format one output line
+;           word_count = 0
+;           PC += col                    # advance past previous line
+;           col = indent
+;           for i in range(indent):
+;               mem[PC + i] = ' '        # fill indent with spaces
+;           # Skip whitespace in input
+;           while mem[IF] in (' ', CR): IF += 1
+;           if mem[IF] == PARAGR: break  # end of paragraph
+;           # Copy words, wrap at margin, justify when full
+;           # (see SEPARA for hyphenation, ESPALHA for justification)
 ;------------------------------------------------------------
 ;
 X.BASIC  BYT 0                  ; saved X
@@ -199,6 +222,14 @@ L1       LDY #0
 ;     I accents: {              O accents: #, <, }
 ;     U accents: |
 ;   Returns Z=1 if vowel.
+;
+;   def is_vowel(ch: int) -> bool:
+;       accented = {'@','[','\\','_',  # á, à, â, ã
+;                   '&','`',           # é, ê
+;                   '{',               # í
+;                   '#','<','}',       # ó, ô, õ
+;                   '|'}               # ú
+;       return ch in accented or toupper(ch) in 'AEIOU'
 ;------------------------------------------------------------
 ;
 VOGAL?:
@@ -245,6 +276,15 @@ VOGAL?:
 ; PROC -- Find next vowel in word starting from position V2
 ;   Scans output buffer (PC),Y looking for a vowel.
 ;   Clamps V2 to APONT if it has passed the word boundary.
+;
+;   def proc():
+;       """Advance V2 to next vowel position in output buffer."""
+;       if V2 > APONT:
+;           V2 = APONT; return           # clamp to word boundary
+;       while V2 <= APONT:
+;           if is_vowel(mem[PC + V2]):
+;               return                   # found a vowel
+;           V2 += 1
 ;------------------------------------------------------------
 ;
 PROC:
@@ -275,6 +315,22 @@ PROC:
 ;     - H preceded by L,N,C,P -> break before the pair (digraphs)
 ;       (e.g., "ca-lha" breaks before "lh")
 ;   Sets MEIO to the break position.
+;
+;   def quebra():
+;       """Apply Portuguese phonetic rules for syllable breaks."""
+;       pos = V2 - 1                     # char before vowel
+;       ch = toupper(mem[PC + pos])
+;       if ch in ('R', 'L'):
+;           prev = toupper(mem[PC + pos - 1])
+;           if prev in 'BCDFGTPV':       # onset cluster: BR, CR, etc.
+;               MEIO = pos - 2           # break before the pair
+;               return
+;       elif ch == 'H':
+;           prev = toupper(mem[PC + pos - 1])
+;           if prev in 'LNCP':           # digraph: LH, NH, CH, PH
+;               MEIO = pos - 2           # break before the pair
+;               return
+;       MEIO = pos - 1                   # default: break before consonant
 ;------------------------------------------------------------
 ;
 QUEBRA:
@@ -342,6 +398,29 @@ QUEBRA:
 ;     4. Inserting a hyphen at the best break point
 ;   If no break is possible, falls through to FIMSEP which
 ;   pushes the overflow characters back to the input buffer.
+;
+;   def separa():
+;       """Find best hyphenation point for word that overflows margin."""
+;       # Find start of current word
+;       word_start = APONT - 1
+;       while mem[PC + word_start] not in (' ', CR) and word_start > 0:
+;           word_start -= 1
+;       MARC = word_start                # default break = word start
+;       if not SPR: goto fimsep          # hyphenation disabled
+;
+;       V2 = word_start + 1
+;       proc()                           # find first vowel
+;       V1 = V2
+;       # Search for valid syllable break between vowel pairs
+;       while V2 < APONT and V2 < MD:
+;           V1 = V2; V2 += 1
+;           proc()                       # find next vowel
+;           if V1 + 1 >= V2: continue    # adjacent vowels
+;           if not is_vowel(mem[PC + V2]): goto fimsep
+;           quebra()                     # apply phonetic rules -> MEIO
+;           if MEIO < MD:
+;               MARC = MEIO              # update best break point
+;       # Fall through to FIMSEP
 ;------------------------------------------------------------
 ;
 SEPARA:
@@ -447,6 +526,29 @@ FIMSEP:
 ;     quotient  = spaces_needed / NPAL  (added to every gap)
 ;     remainder = spaces_needed % NPAL  (one extra to first N gaps)
 ;   Shifts characters right in the output buffer to insert spaces.
+;
+;   def espalha():
+;       """Justify line by distributing extra spaces evenly."""
+;       if NPAL == 0: errform()          # no words -> error
+;       spaces_needed = MD - APONT
+;       quotient = spaces_needed // NPAL
+;       remainder = spaces_needed % NPAL
+;
+;       # Shift chars right, inserting extra spaces at word boundaries
+;       dst = MD
+;       for src in range(APONT, -1, -1):
+;           mem[PC + dst] = mem[PC + src]
+;           dst -= 1
+;           if mem[PC + src] == ' ':     # at a space (word gap)
+;               extra = quotient
+;               if remainder > 0:
+;                   extra += 1; remainder -= 1
+;               for _ in range(extra):
+;                   mem[PC + dst] = ' '; dst -= 1
+;       # Write CR and continue to next line
+;       poecr(MD + 1)
+;       APONT = indent
+;       goto basico1()                   # format next line
 ;------------------------------------------------------------
 ;
 QUOCI    BYT 0                   ; spaces per gap
@@ -532,6 +634,12 @@ VAZIO:
 ;------------------------------------------------------------
 ; ERRFORM -- Handle "word too long" formatting error
 ;   Shows error message, fixes text, returns to WARMINIT.
+;
+;   def errform():
+;       message("PALAVRA LONGA!!")       # "Word too long!"
+;       errbell(); wait()
+;       PC += APONT                      # advance past partial output
+;       arrtexto()                       # emergency exit
 ;------------------------------------------------------------
 ;
 ERRFORM:
@@ -552,6 +660,12 @@ ERRFORM:
 ;------------------------------------------------------------
 ; SPC? -- Check available memory between PC and IF
 ;   Aborts to ARRTEXTO if buffer is nearly full.
+;
+;   def spc_check():
+;       if PC_hi + 1 >= IF_hi:           # less than 256 bytes free
+;           message("ACABOU ESPACO!!")   # "Out of space!"
+;           errbell(); wait()
+;           arrtexto()                   # emergency exit
 ;------------------------------------------------------------
 ;
 SPC?:
@@ -573,6 +687,20 @@ SPC?:
 ; ARRTEXTO -- Emergency exit: close gap buffer, restore text, warm start
 ;   If CARACTER holds a saved char, finds its NUL placeholder
 ;   in the text and restores it before returning to WARMINIT.
+;
+;   def arrtexto():
+;       """Emergency exit: restore text and restart editor."""
+;       PF = IF                          # set end-of-text
+;       mov_fech()                       # close gap buffer
+;       if CARACTER != 0:
+;           # Find NUL placeholder and restore saved char
+;           while PC < PF:
+;               if mem[PC] == 0:
+;                   mem[PC] = CARACTER
+;                   break
+;               PC += 1
+;       CARACTER = 0
+;       warminit()                       # restart editor
 ;------------------------------------------------------------
 ;
 ARRTEXTO:
@@ -600,6 +728,12 @@ ARRTEXTO:
 ; TABELA? -- Check if current input starts with Ctrl-T (table marker)
 ;   Returns Carry=1 if table section, Carry=0 if normal text.
 ;   Advances IF past the Ctrl-T marker(s).
+;
+;   def is_table() -> bool:
+;       if mem[IF] == CTRL_T or mem[IF + 1] == CTRL_T:
+;           IF += 1 or 2                 # skip marker(s)
+;           return True
+;       return False
 ;------------------------------------------------------------
 ;
 TABELA?:
@@ -623,6 +757,13 @@ TABELA?:
 ; AJTABELA -- Emit table prefix to output
 ;   Writes Ctrl-T marker (and CR if needed) to the output at PC.
 ;   Handles edge case when PC is at very start of buffer.
+;
+;   def ajtabela():
+;       if PC == INIBUF - 1:
+;           PC += 1                      # skip buffer sentinel
+;       mem[PC] = CTRL_T; PC += 1        # write table marker
+;       if mem[IF] != CR:
+;           mem[PC] = CR; PC += 1        # add CR if needed
 ;------------------------------------------------------------
 ;
 AJTABELA:
@@ -650,6 +791,11 @@ AJTABELA:
 ;------------------------------------------------------------
 ; ULTPAR -- Clamp IF to ENDBUF (prevent overrun at end of text)
 ;   If IF > ENDBUF, sets IF = ENDBUF and backs up PC by one.
+;
+;   def ultpar():
+;       if IF > ENDBUF:
+;           if PC > INIBUF: PC -= 1
+;           IF = ENDBUF
 ;------------------------------------------------------------
 ;
 ULTPAR:
@@ -674,6 +820,12 @@ ULTPAR:
 ;
 ;------------------------------------------------------------
 ; Pointer utilities for the IF (input/formatter) pointer
+;
+;   def pf_to_if(): IF = PF
+;   def if_to_pf(): PF = IF
+;   def incif(): IF += 1
+;   def decif(): IF -= 1  # preserves A
+;   def poecr(y): mem[PC + y:y+SPACE+1] = [CR] + [' ']*SPACE
 ;------------------------------------------------------------
 ;
 PF>>IF:                           ; IF = PF
@@ -721,6 +873,9 @@ POECR    LDX SPACE
 ;------------------------------------------------------------
 ; ARATFORM -- Update auto-format indicator on status bar
 ;   Shows solid block if auto-format is on, space if off.
+;
+;   def aratform():
+;       status_bar[34] = SOLID_BLOCK if AUTOFORM else ' '
 ;------------------------------------------------------------
 ;
 ARATFORM:
@@ -742,6 +897,34 @@ ARATFORM:
 ;      marker, moving it into the input side of the gap
 ;   3. Calls BASICO (or AJUSTAR1) to reformat the paragraph
 ;   4. Restores CARACTER, closes the gap, redraws
+;
+;   def saida():
+;       """Standard exit: reformat current paragraph after edit."""
+;       IF = PF
+;       # Find first significant char, save it, replace with NUL
+;       while mem[IF] != PARAGR:
+;           if mem[IF] >= ' ' + 1 and mem[IF] != soft_hyphen:
+;               CARACTER = mem[IF]
+;               mem[IF] = 0              # NUL placeholder
+;               break
+;           IF += 1
+;       # Move text from PF backward to PARAGR into input side
+;       IF = PF
+;       while mem[PC] != PARAGR:
+;           IF -= 1; PC -= 1
+;           mem[IF] = mem[PC]
+;       IF += 1; PC += 1
+;       # Reformat the paragraph
+;       if ADJ_FLAG:
+;           ajustar1()                   # alignment mode
+;       else:
+;           basico(ME_PA)                # normal formatting
+;       ultpar(); PF = IF; mov_fech()    # close gap buffer
+;       # Find NUL and restore CARACTER
+;       if CARACTER:
+;           while mem[PC] != 0: PC -= 1
+;           mem[PC] = CARACTER; CARACTER = 0
+;       newpage1()
 ;------------------------------------------------------------
 ;
 SAIDA:
@@ -817,6 +1000,16 @@ SAIDA:
 ; FRMTPRGR -- Reformat current paragraph from its start
 ;   Scans backward from PC to find the paragraph marker,
 ;   moving text into the input side, then calls BASICO.
+;
+;   def frmtprgr():
+;       """Move paragraph text to input side and reformat."""
+;       while True:
+;           PC -= 1
+;           if mem[PC] == PARAGR: break
+;           IF -= 1
+;           mem[IF] = mem[PC]            # shift to input side
+;       PC += 1
+;       basico(ME_PA)
 ;------------------------------------------------------------
 ;
 FRMTPRGR:
@@ -840,6 +1033,9 @@ FRMTPRGR:
 ;
 ;------------------------------------------------------------
 ; PRSIM / PRNAO -- Print "SIM" (yes) / "NAO" (no)
+;
+;   def prsim(): print("SIM")    # Portuguese "yes"
+;   def prnao(): print("NAO")    # Portuguese "no"
 ;------------------------------------------------------------
 ;
 PRSIM:
@@ -872,6 +1068,27 @@ PRNAO:
 ;   The first character of each DCI string is the hotkey letter,
 ;   followed by the descriptive text. DCI sets the high bit on
 ;   the last character of each string.
+;
+;   def menu():
+;       """Render menu from inline data (inline data trick)."""
+;       data = pop_return_address()
+;       n_options = mem[data]; data += 1
+;       home()
+;       vtab(12 - n_options)             # center menu vertically
+;       start_col = mem[data]; data += 1
+;       while mem[data] != 0:
+;           CH = start_col
+;           cout(mem[data])              # hotkey
+;           cout('-')
+;           data += 1
+;           while True:                  # print label (DCI string)
+;               ch = mem[data] | 0x80    # set high bit
+;               cout(ch)
+;               if mem[data] & 0x80: break  # last char of DCI
+;               data += 1
+;           crout(); crout()
+;           data += 1
+;       jump(data + 1)
 ;------------------------------------------------------------
 ;
 MENU:
@@ -925,6 +1142,23 @@ MENU:
 ;   A = max_length on entry.
 ;   Characters outside CHARMIN..CHARMAX are rejected.
 ;   Backspace supported. Returns on CR.
+;
+;   def readstr(max_len: int):
+;       length = 0
+;       while True:
+;           key = geta40()
+;           if key == CR:
+;               buf[length] = CR; return
+;           if key == CTRL_H:            # backspace
+;               if length > 0:
+;                   length -= 1; CH -= 1
+;                   print40(' '); CH -= 1
+;           elif CHARMIN <= key < CHARMAX and length < max_len:
+;               buf[length] = key
+;               length += 1
+;               print40(key)
+;           else:
+;               errbell()
 ;------------------------------------------------------------
 ;
 READSTR:
@@ -977,6 +1211,19 @@ READSTR:
 ;     result = 0
 ;     for each digit: result = result * 10 + digit
 ;   Returns: Y = low byte, A = high byte.
+;
+;   def readnum() -> int:
+;       CHARMIN, CHARMAX = '0', '9'
+;       readstr(5)                       # read up to 5 digits
+;       result = 0
+;       for digit in BUFNUM:
+;           if digit == CR: break
+;           # result = result * 10:
+;           #   = result*2 + result*8
+;           #   = (result<<1) + (result<<3)
+;           result = (result << 1) + (result << 3)
+;           result += ord(digit) - ord('0')
+;       return result                    # (hi, lo) = (A, Y)
 ;------------------------------------------------------------
 ;
 READNUM:

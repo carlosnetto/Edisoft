@@ -36,6 +36,23 @@ PROXTAB  DFS 1               ; result: next tab stop column
 ; TABULA -- Tab stop configuration menu
 ;   L = clear all tabs, M = set tab at current column,
 ;   D = unset tab at current column. Ctrl-C = cancel.
+;
+;   def tabula():
+;       message("TAB: L-clear M-set D-unset")
+;       key = toupper(wait())
+;       if key == CTRL_C: return
+;       if key == 'L':
+;           BITTAB[:] = [0] * 10         # clear all tabs
+;       elif key in ('M', 'D'):
+;           byte_idx = CH80 // 8
+;           bit_idx = CH80 % 8
+;           mask = 0x80 >> bit_idx
+;           if key == 'M':
+;               BITTAB[byte_idx] |= mask   # set tab
+;           else:
+;               BITTAB[byte_idx] &= ~mask  # unset tab
+;       else:
+;           errbell(); tabula()
 ;------------------------------------------------------------
 ;
 TABULA:
@@ -106,6 +123,25 @@ TABULA:
 ;
 ;   Scans the bitmap starting from CH80+1, looking for the first
 ;   set bit. Returns result in PROXTAB. If none found, PROXTAB = CH80.
+;
+;   def nexttab():
+;       """Find next tab stop column after CH80."""
+;       byte_idx = CH80 // 8
+;       bit_idx = CH80 % 8
+;       # Shift out bits <= current position
+;       byte = BITTAB[byte_idx] << (bit_idx + 1)
+;       bit_idx += 1
+;       # Scan for first set bit
+;       while byte_idx < 10:
+;           while bit_idx < 8:
+;               if byte & 0x80:          # found a set bit
+;                   PROXTAB = byte_idx * 8 + bit_idx
+;                   return
+;               byte <<= 1; bit_idx += 1
+;           byte_idx += 1
+;           if byte_idx < 10:
+;               byte = BITTAB[byte_idx]; bit_idx = 0
+;       PROXTAB = CH80                   # no tab found
 ;------------------------------------------------------------
 ;
 NEXTTAB:
@@ -172,6 +208,22 @@ NEXTTAB:
 ;   Uses successive subtraction: for each power of 10, count how
 ;   many times it fits, print the digit. Leading zeros are replaced
 ;   with spaces (suppressed) except for the units digit.
+;
+;   def decimal(value: int, start_index: int = 0):
+;       """Print 16-bit value as decimal with leading zero suppression."""
+;       powers = [10000, 1000, 100, 10, 1]
+;       past_leading = False
+;       for i in range(start_index, 5):
+;           digit = 0
+;           while value >= powers[i]:
+;               value -= powers[i]
+;               digit += 1
+;           if digit > 0 or i == 4:      # always print units digit
+;               past_leading = True
+;           if past_leading:
+;               cout(ord('0') + digit)
+;           else:
+;               cout(ord(' '))           # suppress leading zero
 ;------------------------------------------------------------
 ;
 TABLO    BYT 10000,1000,100,10,1     ; low bytes of powers of 10
@@ -225,6 +277,14 @@ DECIMAL:
 ;
 ;------------------------------------------------------------
 ; ESPACO -- Display available buffer space (ENDBUF - PF)
+;
+;   def espaco():
+;       message("ESPACO: _____ BYTES")
+;       free_space = ENDBUF - PF
+;       CH = 8; vtab(0)
+;       decimal(free_space)
+;       arrbas80()
+;       wait()
 ;------------------------------------------------------------
 ;
 ESPACO:
@@ -255,6 +315,13 @@ ESPACO:
 ;
 ;------------------------------------------------------------
 ; MAIS -- Move to next screen line (advance PC past 80 columns or CR)
+;
+;   def mais():
+;       if PC == PF:
+;           errbell(); return
+;       prtline()                        # print line (advances PC)
+;       if CV80 == 23:
+;           ultiline()                   # refresh bottom line
 ;------------------------------------------------------------
 ;
 MAIS:
@@ -272,6 +339,15 @@ MAIS:
 ;
 ;------------------------------------------------------------
 ; MENOS -- Move to start of previous screen line (rewind PC)
+;
+;   def menos():
+;       if PC == INIBUF:
+;           errbell(); return
+;       while CH80 != 0:                 # move to column 0
+;           backcur()
+;       if PC == INIBUF: return
+;       while CH80 != 0:                 # cross into previous line, to column 0
+;           backcur()
 ;------------------------------------------------------------
 ;
 MENOS:
@@ -301,6 +377,26 @@ MENOS:
 ;   PC to restore the column (or stops at CR if line is shorter).
 ;   While waiting at the target position, accepts Ctrl-O (repeat up)
 ;   or Ctrl-L (switch to down) for rapid navigation.
+;
+;   def up():
+;       target_col = CH80
+;       help(); CH80 = 0; menos()        # go to previous line start
+;       # Advance PC within line to reach target column
+;       y = 0
+;       while y < target_col and mem[PC + y] != CR:
+;           y += 1
+;       if mem[PC + y] == CR:            # line too short
+;           PC += y
+;           key = geta()
+;           if key == CTRL_O: up()       # repeat up
+;           elif key == CTRL_L: down()   # switch to down
+;       else:
+;           PC += y
+;
+;   def down():
+;       target_col = CH80
+;       mais()                           # go to next line
+;       # Same logic as up() for column positioning
 ;------------------------------------------------------------
 ;
 UP:
@@ -424,6 +520,18 @@ DOWN1    JSR MAIS                 ; move to next line
 ;   The gap buffer is open, so text after the cursor is at
 ;   PF..ENDBUF. Temporarily sets PC/PF to that range and calls
 ;   FASTVIS, then restores the real pointers.
+;
+;   def vis_ins():
+;       """Redraw screen with gap buffer open."""
+;       savepc()
+;       # Temporarily point PC to tail text in high memory
+;       saved_pf = PF
+;       PC = PF; savepc()
+;       PF = ENDBUF
+;       fastvis()                        # render tail text
+;       # Restore real pointers
+;       restpc(); PF = PC
+;       restpc()
 ;------------------------------------------------------------
 ;
 VIS.INS:
@@ -463,6 +571,43 @@ VIS.INS:
 ;     - Ctrl-H (BS): delete char behind cursor
 ;     - Ctrl-C: exit insert mode
 ;   On exit, closes gap and optionally reformats.
+;
+;   def insere():
+;       """Modal insert mode."""
+;       arrmarc()                        # reset block markers
+;       message("INSERE: ...")
+;       PC1 = PC                         # save entry point
+;       mov_abre()                       # open gap at cursor
+;       IF = PF - 1
+;       while True:
+;           key = geta()
+;           if key == CTRL_C:
+;               if PC != PC1 and AUTOFORM:
+;                   saida()              # reformat paragraph
+;               else:
+;                   mov_fech()           # just close gap
+;               arrpage(); return
+;           elif key == PARAGR:
+;               if AUTOFORM:
+;                   # Reformat paragraph and redraw
+;                   form_ins()
+;               else:
+;                   insert_char(key)
+;           elif key == CTRL_Z:
+;               key = rdkey40()          # raw char input
+;               insert_char(key)
+;           elif key == CTRL_I:
+;               nexttab()
+;               while CH80 < PROXTAB:
+;                   insert_char(' ')
+;               vis_ins()
+;           elif key == CTRL_H:
+;               if PC == PC1:
+;                   errbell()
+;               else:
+;                   backcur(); vis_ins()
+;           else:
+;               insert_char(key)
 ;------------------------------------------------------------
 ;
 INSERE:
@@ -615,6 +760,37 @@ INS.EXIT JSR PC.PC1?
 ;   4. Open gap buffer, scan for matches via PROCURA1
 ;   5. Copy non-matching text, replace matching text
 ;   6. Optionally reformat paragraphs that changed
+;
+;   def renome():
+;       """Global search and replace."""
+;       search_str = input("RENOMEAR:")
+;       if not search_str: return
+;       replace_str = input("POR:")
+;       if cancelled: return
+;       confirm_each = sim_nao("Confirm each?")
+;
+;       savepc(); mov_abre()
+;       IF = PF; PF = ENDBUF
+;       changed = False
+;       while True:
+;           PC = IF; match = procura1()
+;           if not match: break
+;           match_pos = PC; restpc()
+;           # Copy text up to match
+;           while IF != match_pos:
+;               if mem[IF] == PARAGR and changed and AUTOFORM:
+;                   frmtprgr(); changed = False
+;               mem[PC] = mem[IF]; IF += 1; PC += 1
+;           if confirm_each:
+;               show_context(); if not sim_nao("Replace?"): continue
+;           # Do replacement
+;           spc_check(); changed = True
+;           for ch in replace_str:
+;               mem[PC] = ch; PC += 1
+;           skip_over_match()
+;       # Final reformat if needed
+;       if AUTOFORM and changed: frmtprgr()
+;       ultpar(); PF = IF; mov_fech(); arrmarc(); newpage1(); arrpage()
 ;------------------------------------------------------------
 ;
 TROCOU?  DFS 1                    ; nonzero = at least one replacement made
@@ -798,6 +974,8 @@ REN.SAI  LDA AUTOFORM
 ;
 ;------------------------------------------------------------
 ; SUB.M2M1 -- Calculate block size: TAM = M2 - M1
+;
+;   def sub_m2m1(): TAM = M2 - M1
 ;------------------------------------------------------------
 ;
 SUB.M2M1:
@@ -812,7 +990,12 @@ SUB.M2M1:
 ;
 ;------------------------------------------------------------
 ; APA.BLOC -- Delete block M1..M2
-;   Sets PC1=M1, PC=M2, then calls MOV.APAG to shift left.
+;
+;   def apa_bloc():
+;       """Delete marked block by shifting text left."""
+;       PC1 = M1     # start of block (destination)
+;       PC = M2      # end of block (source)
+;       mov_apag()   # shift text from PC..PF left to PC1
 ;------------------------------------------------------------
 ;
 APA.BLOC:
@@ -831,11 +1014,28 @@ APA.BLOC:
 ;------------------------------------------------------------
 ; COP.BLOC -- Copy block M1..M2 to current PC position
 ;
-;   1. Check if buffer has room for TAM bytes
-;   2. If M1 > PC, adjust markers (they'll shift when buffer moves)
-;   3. Shift text from PC..PF right by TAM bytes (LDDR)
-;   4. Copy block M1..M2 into the opened space (LDDR)
-;   Returns Carry=0 on success, Carry=1 if out of space.
+;   def cop_bloc() -> bool:
+;       """Copy marked block to cursor position. Returns False if no space."""
+;       TAM = M2 - M1                    # block size
+;       free_space = ENDBUF - PF
+;       if free_space < TAM:
+;           errbell(); message("OUT OF SPACE"); return False
+;
+;       # If block is AFTER cursor, markers will shift when we make room
+;       if M1 >= PC:
+;           M1 += TAM
+;           M2 += TAM
+;
+;       # Make room: shift text PC..PF right by TAM bytes
+;       EIBI = PF; EIBF = PF + TAM       # source/dest for LDDR
+;       PF += TAM                        # extend buffer
+;       lddr()                           # shift right (backward copy)
+;
+;       # Copy block content into the opened space
+;       EIBI = M2 - 1; EIBF = PC + TAM - 1
+;       lddr()                           # copy block (backward)
+;       PC = EIBF + 1                    # cursor after copied block
+;       return True
 ;------------------------------------------------------------
 ;
 COP.BLOC:
@@ -937,8 +1137,54 @@ COP.BLOC:
 ;
 ;------------------------------------------------------------
 ; BLOCOS -- Block operations menu
-;   Validates M1 != M2, ensures M1 < M2, then dispatches:
-;     A = delete, C = copy, T = transfer (move), F = format
+;
+;   def blocos():
+;       """Block operations: delete, copy, transfer, format."""
+;       if M1 == M2:
+;           message("REDEFINE MARKS!"); errbell(); wait(); return
+;
+;       if M2 < M1:
+;           M1, M2 = M2, M1              # ensure M1 < M2
+;
+;       message("BLOCK: A-delete C-copy T-transfer F-format")
+;       while True:
+;           key = toupper(geta())
+;           if key == 'A':               # Apagar (delete)
+;               if sim_nao("Really delete?"):
+;                   apa_bloc(); arrmarc(); newpage()
+;               return
+;           elif key == 'C':             # Copy
+;               cop_bloc(); newpage(); return
+;           elif key == 'T':             # Transfer (move)
+;               if cop_bloc():
+;                   savepc(); apa_bloc(); restpc()
+;                   arrmarc(); newpage()
+;               return
+;           elif key == 'F':             # Format block
+;               format_block_m1_to_m2()
+;               return
+;           elif key == CTRL_C:
+;               return
+;           else:
+;               errbell()
+;
+;   def format_block_m1_to_m2():
+;       """Reformat all paragraphs within marked block."""
+;       # Adjust M2 for gap buffer offset
+;       M2 += ENDBUF - PF
+;       PC = M1; help()                  # find line start
+;       decpc(); PC1 = PC                # save start position
+;       # Skip backward past whitespace to paragraph boundary
+;       while mem[PC] in (' ', CR):
+;           decpc()
+;       incpc()
+;       margin = ME_PA if mem[PC] == PARAGR else ME
+;       mov_abre(); IF = PF
+;       while IF < M2:
+;           basico()                     # format one paragraph
+;           mem[PC] = PARAGR; incpc()
+;           incif(); margin = ME_PA
+;       ultpar(); PF = IF; mov_fech(); arrmarc(); newpage()
 ;------------------------------------------------------------
 ;
 BLOCOS:
