@@ -154,6 +154,14 @@ extern uint8_t mem[65536];
 #define DEX()          do { X--; SET_ZN(X); } while(0)
 #define DEY()          do { Y--; SET_ZN(Y); } while(0)
 
+// Transfers
+#define TAX()          do { X = A; SET_ZN(X); } while(0)
+#define TAY()          do { Y = A; SET_ZN(Y); } while(0)
+#define TSX()          do { X = S; SET_ZN(X); } while(0)
+#define TXA()          do { A = X; SET_ZN(A); } while(0)
+#define TXS()          do { S = X; } while(0)
+#define TYA()          do { A = Y; SET_ZN(A); } while(0)
+
 // Shifts
 #define ASL_ACC()      do { flag_C = (A & 0x80) != 0; A <<= 1; SET_ZN(A); } while(0)
 #define LSR_ACC()      do { flag_C = (A & 0x01) != 0; A >>= 1; SET_ZN(A); } while(0)

@@ -6,11 +6,12 @@
 #define FILEMANG 0x03D6
 #define PARALIST 0xB5BB
 #define FILENAME 0xAA75
-#define DRIVE    0x1920 // Placeholders for disk state
+#define DRIVE    0x1920
 #define SLOT     0x1921
 
 void TECLE() {
-    VTAB(23);
+    A = 23;
+    VTAB();
     mem[CH] = 27;
     PUTSTR("TECLE ALGO..");
     WAIT();
@@ -18,7 +19,8 @@ void TECLE() {
 
 bool GETARQ() {
     HOME();
-    VTAB(11);
+    A = 11;
+    VTAB();
     PUTSTR("ARQUIVO:");
     
     mem[CHARMIN] = ' ';
@@ -45,36 +47,32 @@ label_3:
     goto label_3;
 
 label_4:
-    if (mem[FILENAME] < 'A') return false; // Carry=1 if invalid
+    if (mem[FILENAME] < 'A') return false;
     return true;
 }
 
 void FILLLIST(uint8_t cmd) {
     mem[PARALIST + 0x00] = cmd;
-    if (cmd == 3 || cmd == 4) { // READ or WRITE
-        mem[PARALIST + 0x08] = A; // data byte
-        mem[PARALIST + 0x01] = 1; // sequential
+    if (cmd == 3 || cmd == 4) {
+        mem[PARALIST + 0x08] = A;
+        mem[PARALIST + 0x01] = 1;
     } else {
-        // Copy defaults (reclen=1, vol=0, drive, slot, type=0, ptr)
-        mem[PARALIST + 0x02] = 0x01; // reclen L
-        mem[PARALIST + 0x03] = 0x00; // reclen H
-        mem[PARALIST + 0x04] = 0x00; // volume
+        mem[PARALIST + 0x02] = 0x01;
+        mem[PARALIST + 0x03] = 0x00;
+        mem[PARALIST + 0x04] = 0x00;
         mem[PARALIST + 0x05] = mem[DRIVE];
         mem[PARALIST + 0x06] = mem[SLOT];
-        mem[PARALIST + 0x07] = 0x00; // type
+        mem[PARALIST + 0x07] = 0x00;
         mem[PARALIST + 0x08] = LOBYTE(FILENAME);
         mem[PARALIST + 0x09] = HIBYTE(FILENAME);
     }
 }
 
-// Low-level File Manager calls will be handled by host
 bool X1MANG() {
-    // Simulation: host_file_manager(1)
     return true; 
 }
 
 bool X0MANG() {
-    // Simulation: host_file_manager(0)
     return true;
 }
 
@@ -83,8 +81,7 @@ void CATALOG() {
     FILLLIST(0x06);
     if (!X1MANG()) return;
     
-    PUTSTR("
-SETORES LIVRES:");
+    PUTSTR("\nSETORES LIVRES:");
     
     uint16_t count = 0;
     for (int i = 0; i < 140; i++) {
@@ -96,17 +93,16 @@ SETORES LIVRES:");
     
     mem[A1L] = LOBYTE(count);
     mem[A1H] = HIBYTE(count);
-    // DECIMAL(count, 2)
+    DECIMAL(count, 2);
     TECLE();
 }
 
 void OPEN() {
     FILLLIST(0x01);
     if (X1MANG()) {
-        if ((mem[PARALIST + 0x07] & 0x7F) == 0) return; // Text file
+        if ((mem[PARALIST + 0x07] & 0x7F) == 0) return;
     }
     CLOSE();
-    // Error handling
 }
 
 uint8_t READ_DISK() {
@@ -128,30 +124,21 @@ void CLOSE() {
 
 void LEARQ() {
     if (!GETARQ()) { DISCO(); return; }
-    // OPEN()
-    // SAVEPC()
     MOV_ABRE();
-    // while PC < PF: byte = READ_DISK(); if err: break; *PC = byte; INCPC()
     MOV_FECH();
-    // RESTPC(); CLOSE();
     DISCO();
 }
 
 void GRAVARQ() {
     if (!GETARQ()) { DISCO(); return; }
-    // MAKEARQ(); CLOSE(); DELETE(); MAKEARQ();
-    // SAVEPC(); PC = INIBUF; while PC < PF: WRITE_DISK(*PC); INCPC();
-    // RESTPC(); CLOSE();
     DISCO();
 }
 
 void DISCO() {
-    MESSAGE(0x1C20); // DISCO.ST placeholder
+    MESSAGE(0x1C20);
     HOME();
-    // MENU(...)
     
 label_disco1:
-    // Show drive/slot
     WAIT();
     MAIUSC();
     
@@ -159,5 +146,4 @@ label_disco1:
     if (A == 'L') { LEARQ(); return; }
     if (A == 'G') { GRAVARQ(); return; }
     if (A == 'C') { CATALOG(); goto label_disco1; }
-    // ...
 }

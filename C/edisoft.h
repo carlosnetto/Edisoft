@@ -55,7 +55,7 @@
 /* --- Memory Locations --- */
 #define INIVID80 0x3400
 #define ENDVID80 (0x3400 + 80*23)
-#define INIBUF   (ENDVID80 + 10)
+#define INIBUF   0x0800
 #define ENDBUF   0x95F0
 #define LINE1    0x400
 #define BUFFER   0x300
@@ -74,6 +74,7 @@
 #define CTRLS    0x13
 #define CTRLT    0x14
 #define CTRLU    0x15
+#define CTRLW    0x17
 #define CTRLZ    0x1A
 #define ESC      0x1B
 #define PARAGR   0x10
@@ -84,13 +85,22 @@
 #define KEYSTRBE 0xC010
 
 /* --- Editor State --- */
-#define PC1L     0x0310  // Moving some state to high memory or arbitrary free space
+#define AUTOFORM 0x1900
+#define M1LO     0x193E
+#define M1HI     0x193F
+#define M2LO     0x1940
+#define M2HI     0x1941
+#define PC1L     0x0310
 #define PC1H     0x0311
 #define PCAL     0x0312
 #define PCAH     0x0313
 #define FLAG_ABR 0x0314
+#define CHARMIN  0x191D
+#define CHARMAX  0x191E
 
 /* --- Function Prototypes (Subroutines) --- */
+
+// E1
 void INIT();
 void WARMINIT();
 void DECA4();
@@ -110,25 +120,107 @@ void GETA40();
 void INPUT();
 void PRINT();
 void PRINT40();
-void MESSAGE(uint16_t msg_ptr); // Modified to take pointer
-void PUTSTR(const char* s);     // Modified to take pointer
+void MESSAGE(uint16_t msg_ptr);
+void PUTSTR(const char* s);
 void PRTLINE();
 
-/* Apple II Monitor / DOS placeholders */
+// E2
+void ATUALIZA();
+void SCRLUP();
+void RDKEY80();
+void CLREOL80();
+void LTCURS80();
+void HOME80();
+void VTAB80(uint8_t row);
+void ARRBAS80();
+void CROUT80();
+void COUT80();
+void FASTVIS();
+void ULTILINE();
+void BACKCUR();
+void ANDACUR();
+
+// E3
+void BASICO(uint8_t indent);
+void ESPALHA();
+void SEPARA();
+void READNUM();
+void READSTR(uint8_t max_len);
+void SAIDA();
+void FRMTPRGR();
+
+// E4
+void DISCO();
+void CATALOG();
+void LEARQ();
+void GRAVARQ();
+void CLOSE();
+
+// E5
+void LISTAR();
+void LISTAGEM();
+void COUTPUT(uint8_t ch);
+void PUTBRC(uint8_t count);
+
+// E6
+void TABULA();
+void NEXTTAB();
+void DECIMAL(uint16_t val, uint8_t start_idx);
+void ESPACO();
+void UP();
+void DOWN();
+void INSERE();
+void RENOME();
+void APA_BLOC();
+void COP_BLOC();
+void BLOCOS();
+void ARRMARC();
+
+// E7
+void AJUSTAR();
+void AJUSTAR1();
+void PARFORM();
+void SALTA();
+bool PROCURA1();
+void PROCURA();
+void APAGAR();
+void MARCA();
+void TROCA();
+void MAIN_LOOP();
+
+// Navigation Helpers
+void INCPC();
+void DECPC();
+void INCIF();
+void DECIF();
+void BACKLINE();
+void MORE();
+void HELP();
+void MENOS();
+void MAIS();
+void ARRPAGE();
+void PC_PF_COMPARE();
+void PC_INIB_COMPARE();
+bool PC_INIB_CHECK();
+void PC_PC1_COMPARE();
+void PC_PC1_COPY();
+void PC1_PC_COPY();
+void PF_IF_COPY();
+void IF_PF_COPY();
+void SAVEPC();
+void RESTPC();
+
+/* Apple II Monitor / Hardware placeholders */
 void SETKBD();
 void SETVID();
-void HOME80();
 void TEXT();
 void HOME();
 void CLREOL();
 void ARRBASE();
-void ARRBAS80();
-void RDKEY80();
-void CROUT80();
-void COUT80();
 void DELAY(uint8_t a);
+void CROUT();
 void COUT(uint8_t a);
+void ERRBELL();
 void NEWPAGE();
-void MAIN_LOOP();
 
 #endif
