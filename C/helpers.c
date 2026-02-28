@@ -9,7 +9,6 @@ void INCPC() {
 
 void DECPC() {
     uint16_t pc = mem[PCLO] | (mem[PCHI] << 8);
-    // Backward gap skip is more complex, for now simple:
     if (pc > INIBUF) pc--;
     mem[PCLO] = LOBYTE(pc);
     mem[PCHI] = HIBYTE(pc);
@@ -18,10 +17,7 @@ void DECPC() {
 uint16_t INCPTR(uint16_t ptr) {
     ptr++;
     uint16_t pf = mem[PFLO] | (mem[PFHI] << 8);
-    if (ptr == pf) {
-        // Skip gap: move from PF to ENDBUF+1
-        return ENDBUF + 1;
-    }
+    if (ptr == pf) return ENDBUF + 1;
     return ptr;
 }
 
@@ -45,10 +41,9 @@ void PC_PF_COMPARE() {
 
 void PC_INIB_COMPARE() {
     uint16_t pc = mem[PCLO] | (mem[PCHI] << 8);
-    uint16_t pf = INIBUF;
-    flag_C = (pc >= pf);
-    flag_Z = (pc == pf);
-    flag_N = (pc < pf);
+    flag_C = (pc >= INIBUF);
+    flag_Z = (pc == INIBUF);
+    flag_N = (pc < INIBUF);
 }
 
 bool PC_INIB_CHECK() {
@@ -138,16 +133,14 @@ void NEWPAGE() {
 }
 
 void FASTVIS() {
-    uint16_t cur = mem[WNDTOP]; // assuming WNDTOP points to buffer start of page
-    if (cur < INIBUF) cur = INIBUF;
-    
+    // Start rendering from the logical start of the buffer
+    // since we don't have full WNDTOP logic yet.
+    uint16_t cur = INIBUF;
     int lines = 0;
     while (lines < 23) {
         cur = PRTLINE_AT(cur);
         lines++;
-        // Check if cur reached end of text
-        uint16_t total_end = ENDBUF; // simplified
-        if (cur >= total_end) break;
+        if (cur >= ENDBUF) break;
     }
 }
 

@@ -93,10 +93,7 @@ label_1:
 }
 
 void MAIUSC() {
-    // Input A is Apple II high-bit ASCII
-    if (A >= 0xE0) { // lowercase range in Apple II
-        A &= 0xDF;   // convert to uppercase
-    }
+    if (A >= 0xE0) A &= 0xDF;
     SET_ZN(A);
 }
 
@@ -227,7 +224,6 @@ label_9:
     PAUSA();
     LDA_ABS(KEYBOARD);
     BPL(label_9);
-    // Key ready, read it and clear strobe
     LDA_ABS(KEYSTRBE);
     debug_log("RDKEY40 detected key %02X", A);
 }
@@ -281,14 +277,10 @@ void ED_GETA() {
     }
 
     LDY_ABS(0x1906);
-    if (Y == 0) { // Caps lock active
-        if (A >= 0xE0) { // lowercase range
-            A &= 0xDF;   // convert to uppercase
-        }
-    } else { // Lowercase mode
-        if (A >= 0xC0 && A <= 0xDF) { // uppercase range
-            A |= 0x20;   // convert to lowercase
-        }
+    if (Y == 0) { 
+        if (A >= 0xE0) A &= 0xDF;
+    } else { 
+        if (A >= 0xC0 && A <= 0xDF) A |= 0x20;
     }
     debug_log("ED_GETA returning high-bit key %02X", A);
 }
@@ -405,35 +397,27 @@ void PUTSTR(const char* s) {
 
 uint16_t PRTLINE_AT(uint16_t addr) {
     uint16_t cur = addr;
-label_loop:
-    LDY_IMM(0);
-    uint8_t ch = mem[cur];
-    if (ch == CR) goto label_cr;
-    
-    A = ch;
-    PRINT();
-    cur = INCPTR(cur);
-    
-    LDA_ZP(CH80);
-    if (A != 0) goto label_loop;
-    return cur;
-
-label_cr:
-    // Check if cur >= PF
     uint16_t pf = mem[PFLO] | (mem[PFHI] << 8);
-    if (cur >= pf) {
-        A = ch;
-        PRINT();
+label_loop:
+    if (cur == pf) {
+        cur = ENDBUF + 1;
+        pf = 0xFFFF; 
+    }
+    uint8_t ch = mem[cur];
+    if (ch == CR) {
+        A = ch; PRINT();
         return INCPTR(cur);
     }
     A = ch;
     PRINT();
-    return INCPTR(cur);
+    cur = INCPTR(cur);
+    if (mem[CH80] != 0) goto label_loop;
+    return cur;
 }
 
 void PRTLINE() {
-    uint16_t old_pc = mem[PCLO] | (mem[PCHI] << 8);
-    uint16_t new_pc = PRTLINE_AT(old_pc);
-    mem[PCLO] = LOBYTE(new_pc);
-    mem[PCHI] = HIBYTE(new_pc);
+    uint16_t pc = mem[PCLO] | (mem[PCHI] << 8);
+    uint16_t next = PRTLINE_AT(pc);
+    mem[PCLO] = LOBYTE(next);
+    mem[PCHI] = HIBYTE(next);
 }

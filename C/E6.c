@@ -17,12 +17,12 @@ void TABULA() {
     WAIT();
     MAIUSC();
     if (A == CTRLC) return;
-    if (A == 'L') {
+    if (A == A2('L')) {
         for (int i = 0; i < 10; i++) mem[BITTAB + i] = 0;
         return;
     }
-    if (A == 'M' || A == 'D') {
-        bool set = (A == 'M');
+    if (A == A2('M') || A == A2('D')) {
+        bool set = (A == A2('M'));
         LDA_ZP(CH80);
         LSR_ACC(); LSR_ACC(); LSR_ACC();
         TAY();
@@ -94,8 +94,8 @@ void DECIMAL(uint16_t val, uint8_t start_idx) {
             digit++;
         }
         if (digit > 0 || i == 4) past_leading = true;
-        if (past_leading) { A = '0' + digit; COUT(A); }
-        else { A = ' '; COUT(A); }
+        if (past_leading) { A = A2('0' + digit); COUT(A); }
+        else { A = A2(' '); COUT(A); }
     }
 }
 
