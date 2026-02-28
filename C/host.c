@@ -12,20 +12,74 @@ static uint16_t scr_table[24] = {
 
 /* --- Host State --- */
 static bool ncurses_initialized = false;
+static uint32_t poll_counter = 0;
+
+// Forward declaration
+uint8_t host_get_keypress();
+
+void host_move_cursor() {
+    if (!ncurses_initialized) return;
+    int phys_c = (int)mem[CH80] - (int)mem[COLUNA1];
+    int phys_r = (int)mem[CV80];
+    if (phys_c >= 0 && phys_c < 40 && phys_r >= 0 && phys_r < 24) {
+        curs_set(1);
+        move(phys_r, phys_c);
+    } else {
+        curs_set(0);
+    }
+}
+
+void host_update() {
+    if (!ncurses_initialized) return;
+    for (int r = 0; r < 24; r++) {
+        uint16_t base = scr_table[r];
+        for (int c = 0; c < 40; c++) {
+            uint8_t raw_ch = mem[base + c];
+            uint8_t ch = ' ';
+            
+            if (raw_ch < 0x40) {
+                attron(A_REVERSE);
+                ch = raw_ch + 64; 
+                if (ch > 126) ch = ' ';
+                mvaddch(r, c, ch);
+                attroff(A_REVERSE);
+            } else if (raw_ch < 0x80) {
+                attron(A_REVERSE | A_BOLD);
+                ch = (raw_ch & 0x3F) + 64;
+                mvaddch(r, c, ch);
+                attroff(A_REVERSE | A_BOLD);
+            } else {
+                ch = raw_ch & 0x7F;
+                if (ch < 32) ch = ' '; 
+                mvaddch(r, c, ch);
+            }
+        }
+    }
+    mvprintw(24, 0, "PC:%04X PF:%04X CH80:%d CV80:%d POLLS:%u", 
+             mem[PCLO] | (mem[PCHI] << 8), 
+             mem[PFLO] | (mem[PFHI] << 8),
+             mem[CH80], mem[CV80], poll_counter);
+    host_move_cursor();
+    refresh();
+}
 
 void host_init() {
     if (!ncurses_initialized) {
         initscr();
-        raw();
+        cbreak();
         keypad(stdscr, TRUE);
         noecho();
-        nodelay(stdscr, FALSE);
+        nodelay(stdscr, TRUE); 
+        curs_set(0);
+        ESCDELAY = 25; 
         ncurses_initialized = true;
+        debug_init();
     }
 }
 
 void host_cleanup() {
     if (ncurses_initialized) {
+        debug_close();
         endwin();
         ncurses_initialized = false;
     }
@@ -33,20 +87,19 @@ void host_cleanup() {
 
 /* --- Apple II Monitor / Hardware Stubs --- */
 
-void SETKBD() { /* NCurses handles this */ }
-void SETVID() { /* NCurses handles this */ }
-
-void TEXT() { /* Return to text mode - no-op for terminal */ }
+void SETKBD() { }
+void SETVID() { }
+void TEXT() { }
 
 void HOME() {
-    // Clear the physical 40-col screen memory
-    for (int i = 0x400; i < 0x800; i++) mem[i] = 0xA0; // Apple II space (high bit set)
+    // Clear only text area, keep status bar ($400-$427)
+    for (int i = 0x428; i < 0x800; i++) mem[i] = 0xA0;
     mem[CH] = 0;
-    mem[CV] = 0;
+    mem[CV] = 1;
     ARRBASE();
     if (ncurses_initialized) {
         clear();
-        refresh();
+        host_update();
     }
 }
 
@@ -55,7 +108,6 @@ void CLREOL() {
     for (int i = mem[CH]; i < 40; i++) {
         mem[base + i] = 0xA0;
     }
-    // NCurses will reflect this on next refresh
 }
 
 void ARRBASE() {
@@ -67,15 +119,17 @@ void ARRBASE() {
 }
 
 void COUT(uint8_t c) {
-    if (c == 0x8D) { // Carriage Return
+    if (c == 0x8D) {
         mem[CH] = 0;
         mem[CV]++;
-        if (mem[CV] > 23) mem[CV] = 0; // Simplified
+        if (mem[CV] > 23) mem[CV] = 0;
         ARRBASE();
     } else {
         uint16_t base = mem[BASL] | (mem[BASH] << 8);
-        mem[base + mem[CH]] = c;
-        mem[CH]++;
+        if (mem[CH] < 40) {
+            mem[base + mem[CH]] = c;
+            mem[CH]++;
+        }
         if (mem[CH] >= 40) {
             mem[CH] = 0;
             mem[CV]++;
@@ -83,19 +137,34 @@ void COUT(uint8_t c) {
             ARRBASE();
         }
     }
-    
-    // Refresh screen from memory
-    if (ncurses_initialized) {
-        for (int r = 0; r < 24; r++) {
-            uint16_t base = scr_table[r];
-            for (int c = 0; c < 40; c++) {
-                uint8_t ch = mem[base + c] & 0x7F; // strip high bit
-                if (ch < 32) ch = '?';
-                mvaddch(r, c, ch);
-            }
+    if ((poll_counter % 10) == 0) host_update();
+}
+
+/* --- Hardware Interception --- */
+
+uint8_t host_lda_abs(uint16_t addr) {
+    if (addr == KEYBOARD) {
+        poll_counter++;
+        if ((poll_counter % 100000) == 0) {
+            host_update();
         }
-        refresh();
+        host_get_keypress(); 
+        return mem[KEYBOARD];
     }
+    if (addr == KEYSTRBE) {
+        uint8_t val = mem[KEYBOARD];
+        mem[KEYBOARD] &= 0x7F; 
+        return val;
+    }
+    return mem[addr];
+}
+
+void host_sta_abs(uint16_t addr, uint8_t val) {
+    if (addr == KEYSTRBE) {
+        mem[KEYBOARD] &= 0x7F;
+        return;
+    }
+    mem[addr] = val;
 }
 
 void ERRBELL() {
@@ -109,28 +178,42 @@ void DELAY(uint8_t a) {
 /* --- Keyboard Input --- */
 
 uint8_t host_get_keypress() {
-    int ch = getch();
-    if (ch == 27) return 0x1B; // ESC
-    if (ch == KEY_LEFT) return 0x08; // Ctrl-H
-    if (ch == KEY_RIGHT) return 0x15; // Ctrl-U
-    if (ch == KEY_UP) return 0x0B; // Ctrl-K (standard Apple II)
-    if (ch == KEY_DOWN) return 0x0A; // Ctrl-J
-    if (ch == '\r' || ch == '\n') return 0x8D; // Apple II CR
-    if (ch == KEY_BACKSPACE || ch == 127) return 0x08;
+    int ch = wgetch(stdscr);
+    if (ch == ERR) return 0;
     
-    // Standard ASCII with high bit set for Apple II
-    if (ch < 128) return (uint8_t)(ch | 0x80);
-    return 0;
+    uint8_t result = 0;
+    if (ch == 27) result = 0x1B; 
+    else if (ch == KEY_LEFT) result = 0x08;
+    else if (ch == KEY_RIGHT) result = 0x15;
+    else if (ch == KEY_UP) result = 0x0B;
+    else if (ch == KEY_DOWN) result = 0x0A;
+    else if (ch == '\r' || ch == '\n') result = 0x0D; 
+    else if (ch == KEY_BACKSPACE || ch == 127) result = 0x08;
+    else if (ch < 128) {
+        result = (uint8_t)ch;
+        if (result >= 'a' && result <= 'z') result -= 32; 
+    }
+    
+    if (result != 0) {
+        // Return Apple II high-bit ASCII
+        uint8_t apple_key = result | 0x80;
+        mem[KEYBOARD] = apple_key;
+        debug_log("KEYPRESS: detected Apple II key %02X", apple_key);
+    }
+    
+    return result | 0x80; 
 }
 
-// Override WAIT and RDKEY to use host input
 void WAIT() {
+    debug_log("WAIT entered");
     while (1) {
+        host_update();
         uint8_t k = host_get_keypress();
         if (k != 0) {
             A = k;
-            STA_ABS(KEYSTRBE);
+            debug_log("WAIT exiting with key %02X", A);
             return;
         }
+        usleep(10000); 
     }
 }

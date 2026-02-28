@@ -52,21 +52,34 @@ label_6:
 }
 
 void RDKEY80() {
+    debug_log("RDKEY80 entered (CH80=%d, COLUNA1=%d)", mem[CH80], mem[COLUNA1]);
     mem[0x190D] = 0;
 label_retry:
     SEC();
     LDA_ZP(CH80);
     SBC_ZP(COLUNA1);
+    
+    // Boundary check to prevent infinite scrolling loop
+    if (flag_N && mem[COLUNA1] == 0) goto label_9; 
+    if (A < 5 && mem[COLUNA1] == 0) goto label_9;
+    if (A >= 35 && mem[COLUNA1] >= 40) goto label_9;
+
     if (flag_N) goto label_1;
     if (A < 5) goto label_1;
     if (A >= 35) goto label_2;
+
+label_9:
     if (A >= 40) goto label_7;
+    
     STA_ZP(CH);
     RDKEY40();
     goto label_8;
+
 label_7:
     WAIT();
+
 label_8:
+    debug_log("RDKEY80 received key %02X", A);
     if (A == CTRLA) {
         LDA_ABS(0x190D);
         A ^= 40;
@@ -76,15 +89,18 @@ label_8:
         goto label_retry;
     }
     return;
+
 label_1:
     LDA_ZP(CH80);
     SEC(); SBC_IMM(5);
     if (flag_N) LDA_IMM(0);
     goto label_3;
+
 label_2:
     LDA_ZP(CH80);
     SEC(); SBC_IMM(34);
     if (A > 40) LDA_IMM(40);
+
 label_3:
     STA_ZP(COLUNA1);
     ATUALIZA();
@@ -139,7 +155,7 @@ void ARRBAS80() {
     DEY();
     uint16_t addr = INIVID80 + 80 * Y;
     mem[BAS80L] = LOBYTE(addr);
-    mem[BAS80H] = HIBYTE(addr);
+    mem[BASH] = HIBYTE(addr);
     ARRBASE();
 }
 

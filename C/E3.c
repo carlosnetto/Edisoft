@@ -33,7 +33,6 @@ void BASICO(uint8_t indent) {
     mem[APONT] = 0;
     Y = mem[A1L];
 
-label_basico1:
     LDA_IMM(0xFF);
     STA_ABS(NPAL);
     
@@ -221,7 +220,15 @@ void READNUM() {
 }
 
 void SAIDA() {
-    // Reformat paragraph dispatcher
+    debug_log("SAIDA: Refreshing display (closing/rendering/opening gap)");
+    // 1. Move IF back to PF (sync pointers)
+    PF_IF_COPY();
+    // 2. Close the gap so memory is contiguous
+    MOV_FECH();
+    // 3. Re-render the page
+    ARRPAGE();
+    // 4. Open the gap again at the current PC
+    MOV_ABRE();
 }
 
 void FRMTPRGR() {

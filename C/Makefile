@@ -2,14 +2,14 @@ CC = gcc
 CFLAGS = -Wall -I.
 LIBS = -lncurses
 
-SRCS = main.c globals.c host.c helpers.c E1.c E2.c E3.c E4.c E5.c E6.c E7.c
+SRCS = main.c globals.c host.c helpers.c strings.c debug.c E1.c E2.c E3.c E4.c E5.c E6.c E7.c
 OBJS = $(SRCS:.c=.o)
 TARGET = edisoft
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LIBS)
 
-%.o: %.c edisoft.h cpu.h
+%.o: %.c edisoft.h cpu.h debug.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:

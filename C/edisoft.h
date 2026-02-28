@@ -2,6 +2,10 @@
 #define EDISOFT_H
 
 #include "cpu.h"
+#include "debug.h"
+
+/* Helper to convert standard char to Apple II Normal (high bit set) */
+#define A2(c) ((uint8_t)((c) | 0x80))
 
 /* --- Zero Page Addresses --- */
 #define PC       0x18
@@ -61,23 +65,23 @@
 #define BUFFER   0x300
 #define BUFAUX   0x315
 
-/* --- Constants --- */
+/* --- Constants (Apple II High-Bit ASCII) --- */
 #define CR       0x8D
-#define CTRLA    0x01
-#define CTRLC    0x03
-#define CTRLD    0x04
-#define CTRLE    0x05
-#define CTRLH    0x08
-#define CTRLI    0x09
-#define CTRLL    0x0C
-#define CTRLO    0x0F
-#define CTRLS    0x13
-#define CTRLT    0x14
-#define CTRLU    0x15
-#define CTRLW    0x17
-#define CTRLZ    0x1A
-#define ESC      0x1B
-#define PARAGR   0x10
+#define CTRLA    0x81
+#define CTRLC    0x83
+#define CTRLD    0x84
+#define CTRLE    0x85
+#define CTRLH    0x88
+#define CTRLI    0x89
+#define CTRLL    0x8C
+#define CTRLO    0x8F
+#define CTRLS    0x93
+#define CTRLT    0x94
+#define CTRLU    0x95
+#define CTRLW    0x97
+#define CTRLZ    0x9A
+#define ESC      0x9B
+#define PARAGR   0x90 
 
 /* --- Hardware I/O --- */
 #define SPEAK    0xC030
@@ -115,7 +119,7 @@ void MOV_ABRE();
 void MOV_FECH();
 void RDKEY40();
 void PAUSA();
-void GETA();
+void ED_GETA();
 void GETA40();
 void INPUT();
 void PRINT();
@@ -123,6 +127,7 @@ void PRINT40();
 void MESSAGE(uint16_t msg_ptr);
 void PUTSTR(const char* s);
 void PRTLINE();
+uint16_t PRTLINE_AT(uint16_t addr); // New protected version
 
 // E2
 void ATUALIZA();
@@ -191,6 +196,7 @@ void MAIN_LOOP();
 // Navigation Helpers
 void INCPC();
 void DECPC();
+uint16_t INCPTR(uint16_t ptr);
 void INCIF();
 void DECIF();
 void BACKLINE();
@@ -222,5 +228,11 @@ void CROUT();
 void COUT(uint8_t a);
 void ERRBELL();
 void NEWPAGE();
+
+/* --- Host Functions --- */
+void host_init();
+void host_cleanup();
+void host_update();
+void strings_init();
 
 #endif

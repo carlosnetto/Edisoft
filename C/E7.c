@@ -19,7 +19,7 @@ void AJUSTAR() {
     WAIT();
     MAIUSC();
     if (A == CTRLC) return;
-    if (A < 'C' || A > 'E') { ERRBELL(); AJUSTAR(); return; }
+    if (A < A2('C') || A > A2('E')) { ERRBELL(); AJUSTAR(); return; }
     mem[OPCAO_AJ] = A;
     MOV_ABRE();
     PF_IF_COPY();
@@ -46,20 +46,20 @@ label_main:
 void SALTA() {
     MESSAGE(0x2F00);
 label_1:
-    GETA();
+    ED_GETA();
     MAIUSC();
-    if (A == 'C') {
+    if (A == A2('C')) {
         mem[PCLO] = LOBYTE(INIBUF); mem[PCHI] = HIBYTE(INIBUF);
         NEWPAGE(); return;
     }
-    if (A == 'M') {
+    if (A == A2('M')) {
         uint16_t pf = mem[PFLO] | (mem[PFHI] << 8);
         uint16_t dist = (pf - INIBUF) / 2;
         uint16_t pc = INIBUF + dist;
         mem[PCLO] = LOBYTE(pc); mem[PCHI] = HIBYTE(pc);
         NEWPAGE(); return;
     }
-    if (A == 'F') {
+    if (A == A2('F')) {
         mem[PCLO] = mem[PFLO]; mem[PCHI] = mem[PFHI];
         NEWPAGE(); return;
     }
@@ -89,7 +89,7 @@ void APAGAR() {
     PC_PC1_COPY();
     MESSAGE(0x3100);
 label_1:
-    GETA();
+    ED_GETA();
     if (A == CTRLU) {
         PC_PF_COMPARE();
         if (!flag_C) INCPC();
@@ -124,58 +124,61 @@ void MARCA() {
         mem[LINE1 + 15] = '\\';
         mem[M2LO] = mem[PCLO]; mem[M2HI] = mem[PCHI];
     }
-    GETA();
+    ED_GETA();
 }
 
 void TROCA() {
 }
 
 void MAIN_LOOP() {
+    debug_log("MAIN_LOOP entered");
+    MESSAGE(0x3300); 
     while (1) {
-        MESSAGE(0x3300);
-    label_1:
-        GETA();
+        ED_GETA();
         MAIUSC();
-        if (A == '<' || A == ',') {
+        debug_log("MAIN_LOOP: Key received: %02X", A);
+        
+        if (A == A2('<') || A == A2(',')) {
             PC_INIB_COMPARE();
-            if (flag_Z) { ERRBELL(); goto label_1; }
+            if (flag_Z) { ERRBELL(); continue; }
             while (mem[CV80] > 1) { MENOS(); mem[CV80]--; }
-            ARRPAGE(); goto label_1;
+            ARRPAGE(); continue;
         }
-        if (A == '>' || A == '.') {
+
+        if (A == A2('>') || A == A2('.')) {
             PC_PF_COMPARE();
-            if (flag_C) { ERRBELL(); goto label_1; }
+            if (flag_C) { ERRBELL(); continue; }
             while (mem[CV80] < 23) { PRTLINE(); }
-            ARRPAGE(); goto label_1;
+            ARRPAGE(); continue;
         }
-        if (A == CTRLH) { BACKCUR(); goto label_1; }
-        if (A == CTRLU) { ANDACUR(); goto label_1; }
-        if (A == CR)     { MAIS(); goto label_1; }
-        if (A == '-')    { MENOS(); goto label_1; }
-        if (A == CTRLO)  { UP(); goto label_1; }
-        if (A == CTRLL)  { DOWN(); goto label_1; }
-        if (A == 'I') { INSERE(); break; }
-        if (A == 'A') { APAGAR(); break; }
-        if (A == 'T') { TROCA(); break; }
-        if (A == 'R') { RENOME(); break; }
-        if (A == 'B') { BLOCOS(); break; }
-        if (A == 'E') { ESPACO(); break; }
-        if (A == 'P') { PROCURA(); break; }
-        if (A == 'S') { SALTA(); break; }
-        if (A == 'J') { AJUSTAR(); break; }
-        if (A == 'M') { MARCA(); break; }
-        if (A == 'L') { LISTAR(); break; }
-        if (A == 'F') { PARFORM(); break; }
-        if (A == 'D') { DISCO(); break; }
-        if (A == CTRLW) { TABULA(); break; }
+        if (A == CTRLH) { BACKCUR(); continue; }
+        if (A == CTRLU) { ANDACUR(); continue; }
+        if (A == CR)     { MAIS(); continue; }
+        if (A == A2('-'))    { MENOS(); continue; }
+        if (A == CTRLO)  { UP(); continue; }
+        if (A == CTRLL)  { DOWN(); continue; }
+        if (A == A2('I')) { INSERE(); MESSAGE(0x3300); continue; }
+        if (A == A2('A')) { APAGAR(); MESSAGE(0x3300); continue; }
+        if (A == A2('T')) { TROCA(); MESSAGE(0x3300); continue; }
+        if (A == A2('R')) { RENOME(); MESSAGE(0x3300); continue; }
+        if (A == A2('B')) { BLOCOS(); MESSAGE(0x3300); continue; }
+        if (A == A2('E')) { ESPACO(); MESSAGE(0x3300); continue; }
+        if (A == A2('P')) { PROCURA(); MESSAGE(0x3300); continue; }
+        if (A == A2('S')) { SALTA(); MESSAGE(0x3300); continue; }
+        if (A == A2('J')) { AJUSTAR(); MESSAGE(0x3300); continue; }
+        if (A == A2('M')) { MARCA(); MESSAGE(0x3300); continue; }
+        if (A == A2('L')) { LISTAR(); MESSAGE(0x3300); continue; }
+        if (A == A2('F')) { PARFORM(); MESSAGE(0x3300); continue; }
+        if (A == A2('D')) { DISCO(); MESSAGE(0x3300); continue; }
+        if (A == CTRLW) { TABULA(); MESSAGE(0x3300); continue; }
         if (A == CTRLC) {
             ERRBELL();
             MESSAGE(0x3500);
-            GETA();
+            ED_GETA();
             if (A == CTRLE) return;
-            break;
+            MESSAGE(0x3300);
+            continue;
         }
         ERRBELL();
     }
-    MAIN_LOOP();
 }

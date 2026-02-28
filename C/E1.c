@@ -3,6 +3,7 @@
 /* --- Subroutines from E1.asm --- */
 
 void INIT() {
+    debug_log("INIT started");
     LDA_IMM(LOBYTE(0x0800));
     STA_ABS(0x03F2);
     LDA_IMM(HIBYTE(0x0800));
@@ -18,6 +19,8 @@ void INIT() {
     LDA_IMM(HIBYTE(INIBUF));
     STA_ZP(PCHI);
     STA_ZP(PFHI);
+    
+    debug_log("INIT: Pointers set to INIBUF (%04X)", INIBUF);
 
     LDA_IMM(0);
     STA_ZP(FLAG_ABR);
@@ -27,6 +30,7 @@ void INIT() {
 }
 
 void WARMINIT() {
+    debug_log("WARMINIT started");
     CLD();
     SEI();
     LDX_IMM(0xFF);
@@ -41,6 +45,7 @@ void WARMINIT() {
     MOV_FECH();
 
 label_7:
+    debug_log("WARMINIT: Entering TEXT/HOME80");
     TEXT();
     HOME80();
     INC_ZP(WNDTOP);
@@ -68,8 +73,11 @@ label_7:
     LDA_IMM(0x20);
     mem[0x1906] = A;
 
+    debug_log("WARMINIT: Entering NEWPAGE and MAIN_LOOP");
     NEWPAGE();
     MAIN_LOOP();
+    
+    debug_log("WARMINIT: Returned from MAIN_LOOP");
     TEXT();
 
     STA_ABS(0xC080);
@@ -85,19 +93,15 @@ label_1:
 }
 
 void MAIUSC() {
-    CMP_IMM(0);
-    BNE(label_1);
-    LDA_ABS(0x1907);
-label_1:
-    CMP_IMM('@');
-    BCC(label_ret);
-    AND_IMM(0xDF);
-label_ret:
-    return;
+    // Input A is Apple II high-bit ASCII
+    if (A >= 0xE0) { // lowercase range in Apple II
+        A &= 0xDF;   // convert to uppercase
+    }
+    SET_ZN(A);
 }
 
 void SIM_NAO() {
-    CMP_IMM('S');
+    CMP_IMM(A2('S'));
 }
 
 void LDIR() {
@@ -223,89 +227,75 @@ label_9:
     PAUSA();
     LDA_ABS(KEYBOARD);
     BPL(label_9);
-    STA_ABS(KEYSTRBE);
+    // Key ready, read it and clear strobe
+    LDA_ABS(KEYSTRBE);
+    debug_log("RDKEY40 detected key %02X", A);
 }
 
 void PAUSA() {
-    uint16_t tempo = 46786;
-    mem[0x1908] = LOBYTE(tempo);
-    mem[0x1909] = HIBYTE(tempo);
-label_9:
-    LDA_ABS(KEYBOARD);
-    BMI(label_7);
-    INC_ABS(0x1908);
-    BNE(label_9);
-    INC_ABS(0x1909);
-    BNE(label_9);
-label_7:
     return;
 }
 
-void GETA() {
-    LDA_ABS(0x190A);
-    BEQ(label_9);
-    RDKEY40();
-    JMP(label_8);
-label_9:
-    LDY_IMM('0');
-    CLC();
-    LDA_ZP(CH80);
-    ADC_IMM(1);
-label_1:
-    CMP_IMM(10);
-    BCC(label_2);
-    SEC();
-    SBC_IMM(10);
-    INY();
-    JMP(label_1);
-label_2:
-    CLC();
-    ADC_IMM('0');
-    STA_ABS(LINE1 + 36);
-    STY_ABS(LINE1 + 37);
-    RDKEY80();
-label_8:
-    CMP_IMM(ESC);
-    BNE(label_1x);
-    LDY_IMM('+');
-    STA_ABS(LINE1 + 39);
-    CLC();
-    LDA_ABS(0x1906);
-    BNE(label_4);
-    SEC();
-    LDY_IMM('/');
-    STA_ABS(LINE1 + 39);
-label_4:
-    ROL_ACC(); ROL_ACC(); ROL_ACC();
-    STA_ABS(0x1906);
-    BNE(label_geta);
-    LDY_IMM('-');
-    STA_ABS(LINE1 + 39);
-    JMP(label_geta);
-label_geta:
-    GETA();
-    return;
-label_1x:
+void ED_GETA() {
+    while (1) {
+        LDA_ABS(0x190A);
+        BEQ(label_9);
+        RDKEY40();
+        goto label_8;
+    label_9:
+        LDY_IMM('0');
+        CLC();
+        LDA_ZP(CH80);
+        ADC_IMM(1);
+    label_1:
+        CMP_IMM(10);
+        BCC(label_2);
+        SEC();
+        SBC_IMM(10);
+        INY();
+        JMP(label_1);
+    label_2:
+        CLC();
+        ADC_IMM('0');
+        STA_ABS(LINE1 + 36);
+        STY_ABS(LINE1 + 37);
+        RDKEY80();
+    label_8:
+        if (A != ESC) break;
+
+        LDY_IMM('+');
+        STA_ABS(LINE1 + 39);
+        CLC();
+        LDA_ABS(0x1906);
+        BNE(label_4);
+        SEC();
+        LDY_IMM('/');
+        STA_ABS(LINE1 + 39);
+    label_4:
+        ROL_ACC(); ROL_ACC(); ROL_ACC();
+        STA_ABS(0x1906);
+        if (flag_Z) {
+            LDY_IMM('-');
+            STA_ABS(LINE1 + 39);
+        }
+    }
+
     LDY_ABS(0x1906);
-    BNE(label_2x);
-    CMP_IMM('@');
-    BCC(label_2x);
-    ORA_IMM(0x20);
-label_2x:
-    PHA();
-    LDA_ABS(0x1906);
-    AND_IMM(0x20);
-    STA_ABS(0x1906);
-    BNE(label_3);
-    LDY_IMM('-');
-    STA_ABS(LINE1 + 39);
-label_3:
-    PLA();
+    if (Y == 0) { // Caps lock active
+        if (A >= 0xE0) { // lowercase range
+            A &= 0xDF;   // convert to uppercase
+        }
+    } else { // Lowercase mode
+        if (A >= 0xC0 && A <= 0xDF) { // uppercase range
+            A |= 0x20;   // convert to lowercase
+        }
+    }
+    debug_log("ED_GETA returning high-bit key %02X", A);
 }
 
 void GETA40() {
     INC_ABS(0x190A);
-    GETA();
+    ED_GETA();
     DEC_ABS(0x190A);
 }
 
@@ -403,29 +393,47 @@ void MESSAGE(uint16_t msg_ptr) {
     for (int i = 0; i < 33; i++) {
         mem[LINE1 + i] = mem[msg_ptr + i];
     }
+    host_update();
 }
 
 void PUTSTR(const char* s) {
     while (*s) {
-        COUT((uint8_t)*s);
+        COUT(A2(*s));
         s++;
     }
 }
 
-void PRTLINE() {
+uint16_t PRTLINE_AT(uint16_t addr) {
+    uint16_t cur = addr;
 label_loop:
     LDY_IMM(0);
-    LDA_INDY(PC);
-    CMP_IMM(CR);
-    BEQ(label_cr);
+    uint8_t ch = mem[cur];
+    if (ch == CR) goto label_cr;
+    
+    A = ch;
     PRINT();
-    INCPC();
+    cur = INCPTR(cur);
+    
     LDA_ZP(CH80);
-    BNE(label_loop);
-    return;
+    if (A != 0) goto label_loop;
+    return cur;
+
 label_cr:
-    PC_PF_COMPARE();
+    // Check if cur >= PF
+    uint16_t pf = mem[PFLO] | (mem[PFHI] << 8);
+    if (cur >= pf) {
+        A = ch;
+        PRINT();
+        return INCPTR(cur);
+    }
+    A = ch;
     PRINT();
-    INCPC();
-    return;
+    return INCPTR(cur);
+}
+
+void PRTLINE() {
+    uint16_t old_pc = mem[PCLO] | (mem[PCHI] << 8);
+    uint16_t new_pc = PRTLINE_AT(old_pc);
+    mem[PCLO] = LOBYTE(new_pc);
+    mem[PCHI] = HIBYTE(new_pc);
 }

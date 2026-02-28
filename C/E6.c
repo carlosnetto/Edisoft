@@ -136,23 +136,40 @@ label_5:
 }
 
 void DOWN() {
-    // Similar to UP
 }
 
 void INSERE() {
-    ARRMARC();
+    debug_log("INSERE: Mode started");
     MESSAGE(0x2800);
     PC_PC1_COPY();
     MOV_ABRE();
-label_main:
-    GETA();
-    if (A == CTRLC) {
-        PC_PC1_COMPARE();
-        if (!flag_Z && mem[AUTOFORM]) SAIDA();
-        else MOV_FECH();
-        ARRPAGE(); return;
+    
+    while (1) {
+        ED_GETA();
+        if (A == CTRLC) {
+            debug_log("INSERE: CTRLC detected, exiting");
+            break;
+        }
+        
+        uint8_t key = A;
+        if (key == CTRLZ) key = PARAGR;
+
+        debug_log("INSERE: Inserting char %02X at PC %04X", key, mem[PCLO] | (mem[PCHI] << 8));
+        
+        // 1. Insert into buffer
+        LDY_IMM(0);
+        STA_INDY(PC);
+        INCPC();
+        
+        // 2. Refresh screen using the SAIDA cycle
+        SAIDA();
     }
-    // ... handling other keys ...
+    
+    PC_PC1_COMPARE();
+    if (!flag_Z && mem[AUTOFORM]) SAIDA();
+    else MOV_FECH();
+    ARRPAGE();
+    debug_log("INSERE: Mode ended");
 }
 
 void RENOME() {

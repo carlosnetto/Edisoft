@@ -1,13 +1,28 @@
 #include "edisoft.h"
 
 void INCPC() {
-    INC_ZP(PCLO);
-    if (mem[PCLO] == 0) INC_ZP(PCHI);
+    uint16_t pc = mem[PCLO] | (mem[PCHI] << 8);
+    pc = INCPTR(pc);
+    mem[PCLO] = LOBYTE(pc);
+    mem[PCHI] = HIBYTE(pc);
 }
 
 void DECPC() {
-    if (mem[PCLO] == 0) DEC_ZP(PCHI);
-    DEC_ZP(PCLO);
+    uint16_t pc = mem[PCLO] | (mem[PCHI] << 8);
+    // Backward gap skip is more complex, for now simple:
+    if (pc > INIBUF) pc--;
+    mem[PCLO] = LOBYTE(pc);
+    mem[PCHI] = HIBYTE(pc);
+}
+
+uint16_t INCPTR(uint16_t ptr) {
+    ptr++;
+    uint16_t pf = mem[PFLO] | (mem[PFHI] << 8);
+    if (ptr == pf) {
+        // Skip gap: move from PF to ENDBUF+1
+        return ENDBUF + 1;
+    }
+    return ptr;
 }
 
 void INCIF() {
@@ -25,7 +40,7 @@ void PC_PF_COMPARE() {
     uint16_t pf = mem[PFLO] | (mem[PFHI] << 8);
     flag_C = (pc >= pf);
     flag_Z = (pc == pf);
-    flag_N = (pc < pf); // mapping for BLT
+    flag_N = (pc < pf); 
 }
 
 void PC_INIB_COMPARE() {
@@ -89,14 +104,10 @@ void BACKCUR() {
 }
 
 void ANDACUR() {
-    PC_PF_COMPARE();
-    if (!flag_C) {
-        PRTLINE();
-    }
+    PRTLINE();
 }
 
 void BACKLINE() {
-    // move back to start of previous logical line
     while (mem[CH80] != 0) BACKCUR();
     BACKCUR();
     while (mem[CH80] != 0) BACKCUR();
@@ -114,8 +125,6 @@ void MENOS() {
 }
 
 void MAIS() {
-    PC_PF_COMPARE();
-    if (flag_C) { ERRBELL(); return; }
     PRTLINE();
 }
 
@@ -129,15 +138,17 @@ void NEWPAGE() {
 }
 
 void FASTVIS() {
-    // Render from PC until screen full or PF
-    SAVEPC();
-    PC_PF_COMPARE();
-    while (!flag_C) {
-        PRTLINE();
-        if (mem[CV80] >= 23) break;
-        PC_PF_COMPARE();
+    uint16_t cur = mem[WNDTOP]; // assuming WNDTOP points to buffer start of page
+    if (cur < INIBUF) cur = INIBUF;
+    
+    int lines = 0;
+    while (lines < 23) {
+        cur = PRTLINE_AT(cur);
+        lines++;
+        // Check if cur reached end of text
+        uint16_t total_end = ENDBUF; // simplified
+        if (cur >= total_end) break;
     }
-    RESTPC();
 }
 
 void VTAB() {
