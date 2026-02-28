@@ -2,41 +2,29 @@
 
 /* --- Subroutines from E7.asm --- */
 
-#define OPCAO_AJ 0x1942
-#define ADJ_FLAG 0x1911
-#define SPR      0x1910
-#define AUTOFORM 0x1900
-#define MD       0x1912
-#define ME       0x1913
-#define PA       0x1914
-#define COLUNAS  0x1943
-#define SPACE    0x1916
-#define ME_PA    0x1915
-#define MARCA_FL 0x1944
-
 void AJUSTAR() {
-    MESSAGE(0x2D10);
+    MESSAGE(AJUST_ST);
     WAIT();
     MAIUSC();
     if (A == CTRLC) return;
     if (A < A2('C') || A > A2('E')) { ERRBELL(); AJUSTAR(); return; }
-    mem[OPCAO_AJ] = A;
+    mem[0x1942] = A;
     MOV_ABRE();
     PF_IF_COPY();
-    mem[ADJ_FLAG] = 1;
+    mem[0x1911] = 1;
     SAIDA();
-    mem[ADJ_FLAG] = 0;
+    mem[0x1911] = 0;
 }
 
 void AJUSTAR1() {
 }
 
 void PARFORM() {
-    MESSAGE(0x2E00);
+    MESSAGE(FORM_ST);
 label_main:
     WAIT();
     if (A == CTRLC) {
-        mem[ME_PA] = mem[ME] + mem[PA];
+        mem[0x1915] = mem[0x1913] + mem[0x1914];
         NEWPAGE(); return;
     }
     MAIUSC();
@@ -44,7 +32,7 @@ label_main:
 }
 
 void SALTA() {
-    MESSAGE(0x2F00);
+    MESSAGE(SALTA_ST);
 label_1:
     ED_GETA();
     MAIUSC();
@@ -72,13 +60,12 @@ bool PROCURA1() {
 }
 
 void PROCURA() {
-    MESSAGE(0x3000);
+    MESSAGE(PROC_ST);
     PC_PC1_COPY();
-    // INPUT(0)
     INCPC();
     if (PROCURA1()) { NEWPAGE(); }
     else {
-        MESSAGE(0x3050);
+        MESSAGE(ER_PR_ST);
         PC1_PC_COPY();
         WAIT();
     }
@@ -87,12 +74,11 @@ void PROCURA() {
 void APAGAR() {
     ARRMARC();
     PC_PC1_COPY();
-    MESSAGE(0x3100);
+    MESSAGE(APAGA_ST);
 label_1:
     ED_GETA();
     if (A == CTRLU) {
-        PC_PF_COMPARE();
-        if (!flag_C) INCPC();
+        if (!PC_PF_CHECK()) INCPC();
         else ERRBELL();
         goto label_9;
     }
@@ -115,7 +101,7 @@ label_9:
 }
 
 void MARCA() {
-    MESSAGE(0x3200);
+    MESSAGE(MARCA_ST);
     mem[MARCA_FL] = ~mem[MARCA_FL];
     if (mem[MARCA_FL] == 0) {
         mem[LINE1 + 15] = '/';
@@ -128,26 +114,25 @@ void MARCA() {
 }
 
 void TROCA() {
+    MESSAGE(TROCA_ST);
 }
 
 void MAIN_LOOP() {
     debug_log("MAIN_LOOP entered");
-    MESSAGE(0x3300); 
+    MESSAGE(MAIN_ST);
     while (1) {
         ED_GETA();
         MAIUSC();
         debug_log("MAIN_LOOP: Key received: %02X", A);
-        
+
         if (A == A2('<') || A == A2(',')) {
-            PC_INIB_COMPARE();
-            if (flag_Z) { ERRBELL(); continue; }
-            while (mem[CV80] > 1) { MENOS(); mem[CV80]--; }
+            if (PC_INIB_CHECK()) { ERRBELL(); continue; }
+            while (mem[CV80] > 1) { MENOS(); }
             ARRPAGE(); continue;
         }
 
         if (A == A2('>') || A == A2('.')) {
-            PC_PF_COMPARE();
-            if (flag_C) { ERRBELL(); continue; }
+            if (PC_PF_CHECK()) { ERRBELL(); continue; }
             while (mem[CV80] < 23) { PRTLINE(); }
             ARRPAGE(); continue;
         }
@@ -157,26 +142,26 @@ void MAIN_LOOP() {
         if (A == A2('-'))    { MENOS(); continue; }
         if (A == CTRLO)  { UP(); continue; }
         if (A == CTRLL)  { DOWN(); continue; }
-        if (A == A2('I')) { INSERE(); MESSAGE(0x3300); continue; }
-        if (A == A2('A')) { APAGAR(); MESSAGE(0x3300); continue; }
-        if (A == A2('T')) { TROCA(); MESSAGE(0x3300); continue; }
-        if (A == A2('R')) { RENOME(); MESSAGE(0x3300); continue; }
-        if (A == A2('B')) { BLOCOS(); MESSAGE(0x3300); continue; }
-        if (A == A2('E')) { ESPACO(); MESSAGE(0x3300); continue; }
-        if (A == A2('P')) { PROCURA(); MESSAGE(0x3300); continue; }
-        if (A == A2('S')) { SALTA(); MESSAGE(0x3300); continue; }
-        if (A == A2('J')) { AJUSTAR(); MESSAGE(0x3300); continue; }
-        if (A == A2('M')) { MARCA(); MESSAGE(0x3300); continue; }
-        if (A == A2('L')) { LISTAR(); MESSAGE(0x3300); continue; }
-        if (A == A2('F')) { PARFORM(); MESSAGE(0x3300); continue; }
-        if (A == A2('D')) { DISCO(); MESSAGE(0x3300); continue; }
-        if (A == CTRLW) { TABULA(); MESSAGE(0x3300); continue; }
+        if (A == A2('I')) { INSERE(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('A')) { APAGAR(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('T')) { TROCA(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('R')) { RENOME(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('B')) { BLOCOS(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('E')) { ESPACO(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('P')) { PROCURA(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('S')) { SALTA(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('J')) { AJUSTAR(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('M')) { MARCA(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('L')) { LISTAR(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('F')) { PARFORM(); MESSAGE(MAIN_ST); continue; }
+        if (A == A2('D')) { DISCO(); MESSAGE(MAIN_ST); continue; }
+        if (A == CTRLW) { TABULA(); MESSAGE(MAIN_ST); continue; }
         if (A == CTRLC) {
             ERRBELL();
-            MESSAGE(0x3500);
+            MESSAGE(EXIT_ST);
             ED_GETA();
             if (A == CTRLE) return;
-            MESSAGE(0x3300);
+            MESSAGE(MAIN_ST);
             continue;
         }
         ERRBELL();

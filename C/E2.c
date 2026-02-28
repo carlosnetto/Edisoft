@@ -36,6 +36,7 @@ label_4:
     DEX(); DEY();
     if (!flag_N) goto label_4;
     LDX_ABS(XSAV);
+    host_update();
 }
 
 void SCRLUP() {
@@ -44,25 +45,31 @@ label_6:
     for (int r = 0; r < 22; r++) {
         mem[INIVID80 + 80*r + Y] = mem[INIVID80 + 80*(r+1) + Y];
     }
-    LDA_IMM(' ');
+    LDA_IMM(0xA0);
     mem[INIVID80 + 80*22 + Y] = A;
     DEY();
     if (!flag_N) goto label_6;
     ATUALIZA();
 }
 
+void SCROLL() {
+    LDY_IMM(79);
+label_7:
+    for (int r = 22; r > 0; r--) {
+        mem[INIVID80 + 80*r + Y] = mem[INIVID80 + 80*(r-1) + Y];
+    }
+    DEY();
+    if (!flag_N) goto label_7;
+    ATUALIZA();
+}
+
 void RDKEY80() {
     debug_log("RDKEY80 entered (CH80=%d, COLUNA1=%d)", mem[CH80], mem[COLUNA1]);
-    mem[0x190D] = 0;
+    mem[COLCTRLA_ADDR] = 0;
 label_retry:
     SEC();
     LDA_ZP(CH80);
     SBC_ZP(COLUNA1);
-    
-    // Boundary check to prevent infinite scrolling loop
-    if (flag_N && mem[COLUNA1] == 0) goto label_9; 
-    if (A < 5 && mem[COLUNA1] == 0) goto label_9;
-    if (A >= 35 && mem[COLUNA1] >= 40) goto label_9;
 
     if (flag_N) goto label_1;
     if (A < 5) goto label_1;
@@ -70,7 +77,7 @@ label_retry:
 
 label_9:
     if (A >= 40) goto label_7;
-    
+
     STA_ZP(CH);
     RDKEY40();
     goto label_8;
@@ -81,9 +88,9 @@ label_7:
 label_8:
     debug_log("RDKEY80 received key %02X", A);
     if (A == CTRLA) {
-        LDA_ABS(0x190D);
+        LDA_ABS(COLCTRLA_ADDR);
         A ^= 40;
-        STA_ABS(0x190D);
+        STA_ABS(COLCTRLA_ADDR);
         STA_ZP(COLUNA1);
         ATUALIZA();
         goto label_retry;
@@ -104,23 +111,28 @@ label_2:
 label_3:
     STA_ZP(COLUNA1);
     ATUALIZA();
-    goto label_retry;
+
+    SEC();
+    LDA_ZP(CH80);
+    SBC_ZP(COLUNA1);
+    goto label_9;
 }
 
 void CLREOL80() {
     SEC();
     LDA_ZP(CH80);
     SBC_ZP(COLUNA1);
+    if (flag_N) LDA_IMM(0);
     if (!flag_N && A < 40) {
         STA_ZP(CH);
         CLREOL();
     }
-    LDA_IMM(' ');
+    LDA_IMM(0xA0);
     LDY_IMM(79);
 label_8:
     STA_INDY(BAS80L);
     DEY();
-    if (Y >= mem[CH80]) goto label_8;
+    if ((int8_t)(Y - mem[CH80]) >= 0) goto label_8;
 }
 
 void LTCURS80() {
@@ -137,7 +149,7 @@ void LTCURS80() {
 
 void HOME80() {
     HOME();
-    for (int i = INIVID80; i < ENDVID80; i++) mem[i] = ' ';
+    for (int i = INIVID80; i < ENDVID80; i++) mem[i] = 0xA0;
     LDA_IMM(0);
     STA_ZP(CH80);
     LDA_IMM(1);
@@ -145,6 +157,7 @@ void HOME80() {
 }
 
 void VTAB80(uint8_t row) {
+    A = row;
     STA_ZP(CV80);
     ARRBAS80();
 }
@@ -155,7 +168,7 @@ void ARRBAS80() {
     DEY();
     uint16_t addr = INIVID80 + 80 * Y;
     mem[BAS80L] = LOBYTE(addr);
-    mem[BASH] = HIBYTE(addr);
+    mem[BAS80H] = HIBYTE(addr);
     ARRBASE();
 }
 
@@ -194,4 +207,33 @@ void COUT80() {
 }
 
 void ULTILINE() {
+    SAVEPC();
+    uint8_t saved_ch = mem[CH80];
+
+    while (1) {
+        uint16_t pc = mem[PCLO] | (mem[PCHI] << 8);
+        uint8_t ch = mem[pc];
+        if (ch == CR) break;
+        if (mem[CH80] >= 79) break;
+        A = ch;
+        PRINT();
+        INCPC();
+    }
+    CLREOL80();
+    RESTPC();
+    mem[CH80] = saved_ch;
+}
+
+void VISUAL() {
+    SAVEPC();
+    SAVCUR80();
+    mem[PRT_FLAG]++;
+    while (mem[CV80] < 23) {
+        PRTLINE();
+    }
+    ULTILINE();
+    mem[PRT_FLAG]--;
+    RSTCUR80();
+    RESTPC();
+    ATUALIZA();
 }

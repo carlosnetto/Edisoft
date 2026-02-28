@@ -19,12 +19,12 @@
 
 void LISTAR() {
     HOME();
-    MESSAGE(0x2110);
+    MESSAGE(LIST_ST);
 label_3:
     WAIT();
     MAIUSC();
-    if (A == 'D') { mem[DEVICE] ^= 1; goto label_3; }
-    if (A == 'L') { LISTAGEM(); LISTAR(); return; }
+    if (A == A2('D')) { mem[DEVICE] ^= 1; goto label_3; }
+    if (A == A2('L')) { LISTAGEM(); LISTAR(); return; }
     if (A == CTRLC) { NEWPAGE(); return; }
 }
 

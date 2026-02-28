@@ -39,6 +39,10 @@ Avoid:
 - Adding comments to every line -- only comment where the intent isn't obvious
 - Emojis
 
+## C HLE Port (Abandoned)
+
+The `C/` directory contains an abandoned attempt to port EDISOFT to C using High-Level Emulation (translating each subroutine to a C function while keeping the 6502 memory model). See `C/LESSONS.md` for a detailed post-mortem. The conclusion: flag semantics, implicit register coupling, and addressing mode subtleties make HLE intractable for 6502 code of this complexity. A classic instruction-level 6502 emulator running the original binary is the correct approach.
+
 ## What NOT to Modify
 
 - Do not change the assembly instructions themselves -- this is historical source code

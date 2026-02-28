@@ -7,13 +7,9 @@
 #define BYTE     0x193B
 #define BIT      0x193C
 #define PROXTAB  0x193D
-#define M1LO     0x193E
-#define M1HI     0x193F
-#define M2LO     0x1940
-#define M2HI     0x1941
 
 void TABULA() {
-    MESSAGE(0x2710);
+    MESSAGE(TABOP_ST);
     WAIT();
     MAIUSC();
     if (A == CTRLC) return;
@@ -100,7 +96,7 @@ void DECIMAL(uint16_t val, uint8_t start_idx) {
 }
 
 void ESPACO() {
-    MESSAGE(0x2750);
+    MESSAGE(ESP_ST);
     SEC();
     LDA_IMM(LOBYTE(ENDBUF));
     SBC_ZP(PFLO);
@@ -140,36 +136,79 @@ void DOWN() {
 
 void INSERE() {
     debug_log("INSERE: Mode started");
-    MESSAGE(0x2800);
+    ARRMARC();
+    MESSAGE(INS_ST);
     PC_PC1_COPY();
     MOV_ABRE();
-    
+    PF_IF_COPY();
+    DECIF();
+
     while (1) {
         ED_GETA();
+
         if (A == CTRLC) {
             debug_log("INSERE: CTRLC detected, exiting");
-            break;
+            PC_PC1_COMPARE();
+            if (!flag_Z && mem[AUTOFORM]) {
+                SAIDA();
+            } else {
+                MOV_FECH();
+            }
+            ARRPAGE();
+            debug_log("INSERE: Mode ended");
+            return;
         }
-        
-        uint8_t key = A;
-        if (key == CTRLZ) key = PARAGR;
 
-        debug_log("INSERE: Inserting char %02X at PC %04X", key, mem[PCLO] | (mem[PCHI] << 8));
-        
-        // 1. Insert into buffer
-        LDY_IMM(0);
-        STA_INDY(PC);
+        if (A == CTRLZ) {
+            SEC();
+            A = mem[CH80];
+            A -= mem[COLUNA1];
+            mem[CH] = A;
+            RDKEY40();
+            goto char_insert;
+        }
+
+        if (A == CTRLI) {
+            NEXTTAB();
+            uint8_t target = mem[0x193D];
+            while (mem[CH80] < target) {
+                if (PC_PF_CHECK()) { ERRBELL(); break; }
+                uint16_t pc = mem[PCLO] | (mem[PCHI] << 8);
+                A = 0xA0;
+                mem[pc] = A;
+                PRINT();
+                INCPC();
+            }
+            VIS_INS();
+            continue;
+        }
+
+        if (A == CTRLH) {
+            if (mem[PCLO] == mem[PC1L] && mem[PCHI] == mem[PC1H]) {
+                ERRBELL();
+                continue;
+            }
+            BACKCUR();
+            VIS_INS();
+            continue;
+        }
+
+    char_insert:
+        if (PC_PF_CHECK()) {
+            ERRBELL();
+            MESSAGE(ER1_ST);
+            WAIT();
+            MESSAGE(INS_ST);
+            continue;
+        }
+
+        debug_log("INSERE: Inserting char %02X at PC %04X", A, mem[PCLO] | (mem[PCHI] << 8));
+        uint16_t pc = mem[PCLO] | (mem[PCHI] << 8);
+        mem[pc] = A;
+        PRINT();
         INCPC();
-        
-        // 2. Refresh screen using the SAIDA cycle
-        SAIDA();
+        VIS_INS();
     }
-    
-    PC_PC1_COMPARE();
-    if (!flag_Z && mem[AUTOFORM]) SAIDA();
-    else MOV_FECH();
-    ARRPAGE();
-    debug_log("INSERE: Mode ended");
 }
 
 void RENOME() {

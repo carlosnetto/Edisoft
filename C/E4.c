@@ -22,15 +22,15 @@ bool GETARQ() {
     A = 11;
     VTAB();
     PUTSTR("ARQUIVO:");
-    
+
     mem[CHARMIN] = ' ';
     mem[CHARMAX] = 'y' + 1;
     mem[IO1L] = LOBYTE(FILENAME);
     mem[IO1H] = HIBYTE(FILENAME);
-    
+
     LDA_IMM(29);
     READSTR(29);
-    
+
     LDY_IMM(0);
 label_1:
     LDA_ABS(FILENAME + Y);
@@ -69,7 +69,7 @@ void FILLLIST(uint8_t cmd) {
 }
 
 bool X1MANG() {
-    return true; 
+    return true;
 }
 
 bool X0MANG() {
@@ -80,9 +80,9 @@ void CATALOG() {
     HOME();
     FILLLIST(0x06);
     if (!X1MANG()) return;
-    
+
     PUTSTR("\nSETORES LIVRES:");
-    
+
     uint16_t count = 0;
     for (int i = 0; i < 140; i++) {
         uint8_t b = mem[DBUFF + i];
@@ -90,7 +90,7 @@ void CATALOG() {
             if (b & (0x80 >> bit)) count++;
         }
     }
-    
+
     mem[A1L] = LOBYTE(count);
     mem[A1H] = HIBYTE(count);
     DECIMAL(count, 2);
@@ -135,15 +135,15 @@ void GRAVARQ() {
 }
 
 void DISCO() {
-    MESSAGE(0x1C20);
+    MESSAGE(DISCO_ST);
     HOME();
-    
+
 label_disco1:
     WAIT();
     MAIUSC();
-    
+
     if (A == CTRLC) { NEWPAGE(); return; }
-    if (A == 'L') { LEARQ(); return; }
-    if (A == 'G') { GRAVARQ(); return; }
-    if (A == 'C') { CATALOG(); goto label_disco1; }
+    if (A == A2('L')) { LEARQ(); return; }
+    if (A == A2('G')) { GRAVARQ(); return; }
+    if (A == A2('C')) { CATALOG(); goto label_disco1; }
 }

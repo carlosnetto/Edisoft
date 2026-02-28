@@ -92,13 +92,18 @@ void SETVID() { }
 void TEXT() { }
 
 void HOME() {
-    // Clear only text area, keep status bar ($400-$427)
-    for (int i = 0x428; i < 0x800; i++) mem[i] = 0xA0;
+    uint8_t top = mem[WNDTOP];
+    if (top > 23) top = 0;
+    for (int r = top; r < 24; r++) {
+        uint16_t base = scr_table[r];
+        for (int c = 0; c < 40; c++) {
+            mem[base + c] = 0xA0;
+        }
+    }
     mem[CH] = 0;
-    mem[CV] = 1;
+    mem[CV] = top;
     ARRBASE();
     if (ncurses_initialized) {
-        clear();
         host_update();
     }
 }
@@ -201,19 +206,22 @@ uint8_t host_get_keypress() {
         debug_log("KEYPRESS: detected Apple II key %02X", apple_key);
     }
     
-    return result | 0x80; 
+    if (result == 0) return 0;
+    return result | 0x80;
 }
 
 void WAIT() {
     debug_log("WAIT entered");
+    STA_ABS(KEYSTRBE);
     while (1) {
         host_update();
         uint8_t k = host_get_keypress();
         if (k != 0) {
             A = k;
+            STA_ABS(KEYSTRBE);
             debug_log("WAIT exiting with key %02X", A);
             return;
         }
-        usleep(10000); 
+        usleep(10000);
     }
 }
