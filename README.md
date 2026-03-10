@@ -357,6 +357,208 @@ This is why the `ATUALIZA` routine is fully unrolled rather than using a loop --
 
 ---
 
+## TypeScript Emulator
+
+### Motivation
+
+EDISOFT runs on Apple II hardware that no longer exists in most preservation environments. A cycle-accurate hardware emulator (AppleWin, MAME) can run it, but does not expose the source code in a way that supports interactive annotation, debugging, or verification of the assembly translation. To bridge that gap, a **custom TypeScript emulator** was built that:
+
+- Assembles `E1.asm`–`E7.asm` directly from source using a custom two-pass Merlin-style assembler
+- Runs the resulting binary on a complete 6502 CPU implementation
+- Renders the Apple II text screen to a modern terminal using ANSI escape codes
+- Provides the Apple II Monitor ROM, DOS 3.3 File Manager, and hardware I/O as lightweight stubs rather than a full hardware simulation
+
+The approach deliberately avoids High-Level Emulation (HLE — translating each subroutine to a host-language function). HLE was attempted first and abandoned; the post-mortem is in `C/LESSONS.md`. The root problem is that 6502 flag semantics, implicit register coupling across call boundaries, and the interplay of carry/overflow with multi-byte arithmetic make it impossible to translate subroutines in isolation without breaking the callers. Instruction-level emulation of the original binary is the correct approach.
+
+---
+
+### Architecture
+
+```
+emulator/
+├── bin/
+│   └── edisoft.bin           Pre-assembled binary (rebuilt by the assembler)
+├── src/
+│   ├── main.ts               Entry point: wires all components, runs the CPU loop
+│   ├── apple2/
+│   │   ├── dos.ts            DOS 3.3 File Manager stub ($3D6)
+│   │   ├── keyboard.ts       Apple II keyboard emulation ($C000/$C010)
+│   │   ├── rom.ts            Apple II Monitor ROM stubs ($Fxxx)
+│   │   └── screen.ts         Text page renderer ($0400–$07FF → ANSI terminal)
+│   ├── cpu/
+│   │   ├── bus.ts            64KB memory bus with read/write/stub hooks
+│   │   └── cpu6502.ts        Complete 6502 CPU (all 56 legal opcodes)
+│   └── assembler/
+│       ├── index.ts          Two-pass assembler with ICL support
+│       ├── tokenizer.ts      Merlin-style line tokenizer (local labels, ^N syntax)
+│       ├── directives.ts     Directive handler (ORG, EQU, ASC, DCI, BYT, DFS, …)
+│       └── expressions.ts    Expression evaluator with forward-ref resolution
+├── edisoft-files/            Runtime directory for EDISOFT file I/O
+├── dist/                     Compiled JavaScript output
+├── package.json
+└── tsconfig.json
+```
+
+#### Assembler (`assembler/`)
+
+A two-pass assembler tailored to the custom Merlin-like syntax used by EDISOFT:
+
+- **Pass 1** — Walks all seven source files (followed recursively via `ICL`) and populates the symbol table. EQU values are evaluated immediately with a try/catch fallback to 0 for forward references, so address arithmetic expressions like `INIVID80+80*N` resolve to correct 16-bit values during size estimation. Without this, instructions that can be encoded as either zero-page or absolute would be estimated at the wrong size, shifting every subsequent label by the accumulated error.
+- **`collectLocals()`** — A second walk between the two passes resolves local forward labels (`^N` / `<N` / `>N`) and also re-records global code label addresses using the now-accurate symbol table. This corrects any label that appeared after a size-sensitive instruction.
+- **Pass 2** — Emits final bytes with all symbols resolved. Automatically narrows `ABS` to `ZP` when the operand fits and the opcode supports it.
+
+The assembler handles all directives used in EDISOFT: `ORG`, `OBJ`, `EQU`, `EPZ`, `ICL`, `DFS`, `BYT`, `HEX`, `ASC`, `DCI`, `ADR`, `HBY`, `INV`, `DCM`, `LST`, `NLS`, `TTL`.
+
+The expression evaluator supports hex (`$`), binary (`%`), character literals (`'A`, `"A"`), the current-PC symbol (`*`), high/low byte prefixes (`/`, `>`), and the full arithmetic/bitwise operator set used in the source.
+
+#### CPU (`cpu/cpu6502.ts`)
+
+A complete instruction-level 6502 emulator:
+
+- All 56 legal opcodes across all addressing modes (IMP, ACC, IMM, ZP, ZPX, ZPY, ABS, ABSX, ABSY, IND, INDX, INDY, REL)
+- Correct flag semantics: N, Z, C, V, I, D, B
+- Correct carry/overflow for ADC/SBC; BCD mode implemented
+- Page-crossing carry for indirect JMP and zero-page indirect
+- `step()` is `async` to allow the RDKEY stub to block until a key arrives without spinning the CPU
+
+#### Memory Bus (`cpu/bus.ts`)
+
+Provides the 64KB address space as a `Uint8Array`. Three hook types:
+
+- **Read hooks** — Intercept reads at specific addresses (keyboard latch at `$C000`)
+- **Write hooks** — Intercept writes (screen dirty-marking for `$0400`–`$07FF`)
+- **Stubs** — Intercept CPU execution before opcode fetch at a given PC; the callback runs host-language code and calls `simRTS()` to return to the 6502 caller
+
+#### ROM Stubs (`apple2/rom.ts`)
+
+Rather than ROM images, the Monitor entry points EDISOFT calls are implemented as stubs:
+
+| Address | Routine | Behavior |
+|---------|---------|----------|
+| `$FC58` | HOME | Clear text window (`$WNDTOP`–`$WNDBTM`) with `$A0`, reset CH/CV |
+| `$FDED` | COUT | Write character to text page at (CH, CV); handle CR, wrap, scroll |
+| `$FD0C` | RDKEY | Block until keypress; return keycode in A with bit 7 set |
+| `$FC62` | CROUT | Output CR+LF |
+| `$FC9C` | CLREOL | Clear from CH to end of line |
+| `$FC22` | ARRBASE | Recompute BASL/BASH from CV (Apple II screen address calculation) |
+| `$FCBA` | NXTA1 | Increment 16-bit pointer A1, set carry if A1 ≥ A2 |
+| `$FCB4` | NXTA4 | Increment 16-bit pointer A4, set carry if A4 ≥ A2 |
+| `$FBE4` | BELL | No-op |
+| `$FB33` | TEXT | No-op |
+| `$FE80/84/89/93` | SETINV/SETNORM/SETKBD/SETVID | No-op |
+
+Hardware I/O hooks: `$C000` (keyboard read), `$C010` (strobe clear), `$C030` (speaker, no-op), `$C080`–`$C08F` (language card, no-op).
+
+#### DOS Stub (`apple2/dos.ts`)
+
+A single stub at `$3D6` (DOS 3.3 File Manager entry) reads the 12-byte parameter list at `$B5BB` and maps the operation to the host filesystem under `--files-dir`. Supports OPEN, CLOSE, READ, WRITE, DELETE, CATALOG, and VERIFY. Filenames are read from `$AA75` (30 bytes, high-bit ASCII, space-padded).
+
+#### Screen Renderer (`apple2/screen.ts`)
+
+Monitors writes to the Apple II text page (`$0400`–`$07FF`) via write hooks and renders dirty rows to the terminal on each render cycle.
+
+Apple II character encoding is three-way:
+
+| Byte range | Type | Character source |
+|------------|------|-----------------|
+| `$00`–`$1F` | Inverse | ROM index + `$40` → `@`–`_` |
+| `$20`–`$3F` | Inverse | ROM index directly → ` `–`?` |
+| `$40`–`$7F` | Flash (→ inverse) | `(byte & $3F)` with same sub-range rule |
+| `$80`–`$FF` | Normal | `(byte & $7F)` with same sub-range rule |
+
+Flash is rendered as inverse video (terminals cannot blink at 1 Hz). Inverse characters use `\x1b[7m…\x1b[0m` (ANSI reverse-video).
+
+The interleaved Apple II row addressing (`$0400`, `$0480`, `$0500`, …, `$0428`, `$04A8`, …) is encoded in a 24-entry lookup table (`ROW_BASES`).
+
+#### Keyboard (`apple2/keyboard.ts`)
+
+Sets stdin to raw mode and maps terminal keycodes to Apple II keycodes (bit 7 set). Arrow key ESC sequences are translated to the Apple II conventions EDISOFT expects (`^H`=left, `^U`=right, `^K`=up, `^J`=down). `Ctrl-C` exits cleanly.
+
+#### Main Loop (`main.ts`)
+
+```
+1. Assemble E1.asm→E7.asm  (or load bin/edisoft.bin)
+2. Initialize 64KB memory image with zero-page system variables
+3. Install ROM stubs + I/O hooks + DOS stub
+4. CPU.PC = $0800  (INIT)
+5. Loop:
+     execute 10,000 instructions
+     render dirty screen rows
+     yield to Node event loop  (setImmediate) for keyboard input
+```
+
+---
+
+### Running the Emulator
+
+#### Prerequisites
+
+- **Node.js** 18 or later
+- **npm**
+
+```bash
+cd emulator
+npm install
+```
+
+#### Build
+
+Compile TypeScript to `dist/`:
+
+```bash
+npm run build
+```
+
+#### Run (pre-assembled binary)
+
+The repository includes a pre-assembled `bin/edisoft.bin`. To run it directly:
+
+```bash
+node dist/main.js
+```
+
+#### Run (assemble from source)
+
+To reassemble from `E1.asm`–`E7.asm` before running, delete or omit the binary and pass `--assemble` (the emulator falls back to assembly when the binary is absent, or you can force it):
+
+```bash
+node dist/main.js --bin /dev/null
+```
+
+Or assemble once explicitly and reuse:
+
+```bash
+npm run assemble        # writes bin/edisoft.bin
+node dist/main.js       # loads bin/edisoft.bin
+```
+
+#### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--bin <path>` | `./bin/edisoft.bin` | Pre-assembled binary to load |
+| `--files-dir <path>` | `./edisoft-files` | Directory for EDISOFT file I/O (OPEN/SAVE/CATALOG) |
+| `--debug` | off | Verbose CPU/stub trace output |
+
+#### File I/O
+
+EDISOFT's disk operations map to the host filesystem. Place text files in `edisoft-files/` (or the directory specified by `--files-dir`) to make them visible to EDISOFT's catalog and load commands.
+
+#### Exiting
+
+Press **Ctrl-C** in the terminal to exit the emulator cleanly.
+
+---
+
+### Known Limitations
+
+- **40-column display only.** EDISOFT's virtual 80-column buffer is fully emulated, but the terminal renderer shows the 40-column hardware window. Use EDISOFT's `Ctrl-A` to toggle between the left (columns 0–39) and right (columns 40–79) halves.
+- **No graphics or sound.** The speaker toggle at `$C030` is a no-op; there is no lores/hires graphics support.
+- **No printer output.** The printer driver stubs are not yet implemented; printing will no-op or hang.
+- **DOS 3.3 subset only.** Sequential OPEN/READ/WRITE/CLOSE and CATALOG are implemented. Random-access and CHAIN are not.
+
+---
+
 ## Annotation History
 
 The source code was originally written with comments in Portuguese. In 2026, the comments were revised and annotated in two phases:
